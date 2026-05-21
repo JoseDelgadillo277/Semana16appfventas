@@ -1,16 +1,18 @@
-import 'package:bancofalabella_app2/firebase_options.dart';
 import 'package:bancofalabella_app2/pages/home_page.dart';
 import 'package:bancofalabella_app2/pages/login_page.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:bancofalabella_app2/supabase_config.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  if (SupabaseConfig.isConfigured) {
+    await Supabase.initialize(
+      url: SupabaseConfig.url,
+      anonKey: SupabaseConfig.anonKey,
+    );
+  }
 
   runApp(const BancoFalabellaApp());
 }
@@ -21,12 +23,11 @@ class BancoFalabellaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Banco Falabella Perú',
+      title: 'Banco Falabella Peru',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF007A3D),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007A3D)),
+        scaffoldBackgroundColor: const Color(0xFFF3F6F4),
         useMaterial3: true,
       ),
       home: const AuthGate(),
@@ -39,24 +40,22 @@ class AuthGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+    if (!SupabaseConfig.isConfigured) {
+      return const HomePage(demoMode: true, userEmail: 'demo@cliente.pe');
+    }
+
+    final auth = Supabase.instance.client.auth;
+
+    return StreamBuilder<AuthState>(
+      stream: auth.onAuthStateChange,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(),
-            ),
-          );
-        }
+        final session = auth.currentSession;
 
-        final user = snapshot.data;
-
-        if (user == null) {
+        if (session == null) {
           return const LoginPage();
         }
 
-        return const HomePage();
+        return HomePage(userEmail: session.user.email);
       },
     );
   }
