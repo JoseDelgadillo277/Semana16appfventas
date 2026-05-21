@@ -56,13 +56,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         ),
-        title: const Row(
-          children: [
-            Icon(Icons.account_balance_wallet_outlined, size: 22),
-            SizedBox(width: 10),
-            Text('Banco Falabella'),
-          ],
-        ),
+        title: const Text('Banco Falabella'),
         actions: [
           IconButton(
             tooltip: 'Cerrar sesion',
@@ -558,9 +552,10 @@ class _SectionIntro extends StatelessWidget {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       decoration: _boxDecoration(accent: color),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 44,
@@ -578,6 +573,8 @@ class _SectionIntro extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w900,
                   ),
@@ -585,8 +582,7 @@ class _SectionIntro extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 4,
                   style: const TextStyle(color: Colors.black54),
                 ),
               ],

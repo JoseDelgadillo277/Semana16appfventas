@@ -77,7 +77,7 @@ class _LoginPageState extends State<LoginPage> {
                         const _FalabellaLogo(),
                         const SizedBox(height: 8),
                         const Text(
-                          'Scoring y creditos preaprobados',
+                          'Banca movil para clientes',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 15, color: Colors.black54),
                         ),
