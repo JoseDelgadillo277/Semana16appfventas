@@ -1,6 +1,18 @@
 import 'package:bancofalabella_app2/services/scoring_repository.dart';
 import 'package:flutter/material.dart';
 
+class _AppColors {
+  static const green = Color(0xFF007A3D);
+  static const deepGreen = Color(0xFF005B2E);
+  static const lime = Color(0xFFC7D900);
+  static const blue = Color(0xFF2563EB);
+  static const orange = Color(0xFFF59E0B);
+  static const red = Color(0xFFDC2626);
+  static const teal = Color(0xFF0F766E);
+  static const purple = Color(0xFF7C3AED);
+  static const background = Color(0xFFF2F6F3);
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key, this.demoMode = false, this.userEmail});
 
@@ -28,13 +40,29 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF007A3D);
-
     return Scaffold(
+      backgroundColor: _AppColors.background,
       appBar: AppBar(
-        backgroundColor: green,
+        backgroundColor: _AppColors.green,
         foregroundColor: Colors.white,
-        title: const Text('Banco Falabella'),
+        elevation: 0,
+        titleSpacing: 16,
+        flexibleSpace: const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_AppColors.green, _AppColors.deepGreen],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.account_balance_wallet_outlined, size: 22),
+            SizedBox(width: 10),
+            Text('Banco Falabella'),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Cerrar sesion',
@@ -73,6 +101,9 @@ class _HomePageState extends State<HomePage> {
         },
       ),
       bottomNavigationBar: NavigationBar(
+        backgroundColor: Colors.white,
+        indicatorColor: const Color(0xFFE0F2E7),
+        surfaceTintColor: Colors.white,
         selectedIndex: selectedIndex,
         onDestinationSelected: (index) {
           setState(() => selectedIndex = index);
@@ -115,8 +146,9 @@ class _OverviewTab extends StatelessWidget {
     final profile = data.profile;
     final credit = data.credit;
     final score = data.score;
-    final fullName =
-        '${_text(profile, 'nombres', fallback: 'Cliente')} ${_text(profile, 'apellidos')}';
+    final email =
+        userEmail ?? _text(profile, 'email', fallback: 'cliente Supabase');
+    final displayName = _displayName(email, profile);
 
     return _PagePadding(
       child: Column(
@@ -128,15 +160,46 @@ class _OverviewTab extends StatelessWidget {
               text:
                   'Modo demo activo. Agrega SUPABASE_URL y SUPABASE_ANON_KEY para leer la BD real.',
             ),
-          Text(
-            'Hola, $fullName',
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          _DashboardHeader(
+            name: displayName,
+            email: email,
+            district: _text(profile, 'distrito', fallback: 'Sin distrito'),
+            segment: _text(
+              credit,
+              'segmento',
+              fallback: _text(
+                score,
+                'segmento_preliminar',
+                fallback: 'Pendiente',
+              ),
+            ),
           ),
-          Text(
-            userEmail ?? _text(profile, 'email', fallback: 'cliente Supabase'),
-            style: const TextStyle(color: Colors.black54),
+          const SizedBox(height: 16),
+          _MetricStrip(
+            metrics: [
+              _MetricItem(
+                Icons.speed,
+                'Score',
+                _number(
+                  credit,
+                  'score_final',
+                  fallback: _number(score, 'score_transaccional'),
+                ).toStringAsFixed(0),
+                _AppColors.green,
+              ),
+              _MetricItem(
+                Icons.payments,
+                'Aprobado',
+                _money(_number(credit, 'monto_aprobado')),
+                _AppColors.blue,
+              ),
+              _MetricItem(
+                Icons.trending_up,
+                'Mora',
+                '${_number(credit, 'dias_mora').toStringAsFixed(0)} dias',
+                _AppColors.orange,
+              ),
+            ],
           ),
           const SizedBox(height: 18),
           _CreditHero(credit: credit, score: score),
@@ -191,6 +254,13 @@ class _ScoringTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _SectionIntro(
+            icon: Icons.speed,
+            title: 'Evaluacion crediticia',
+            description:
+                'Puntaje transaccional, segmento y propuesta de credito calculados desde Supabase.',
+            color: _AppColors.blue,
+          ),
           _SectionTitle('Score transaccional'),
           _ScorePanel(
             score: scoreValue,
@@ -263,6 +333,13 @@ class _FieldTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _SectionIntro(
+            icon: Icons.assignment_turned_in,
+            title: 'Validacion en campo',
+            description:
+                'Resumen de la visita, verificacion del negocio y decision del comite.',
+            color: _AppColors.orange,
+          ),
           _SectionTitle('Ficha de visita'),
           _TimelineTile(
             icon: Icons.person_pin_circle,
@@ -326,12 +403,336 @@ class _NetworkTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _SectionIntro(
+            icon: Icons.groups,
+            title: 'Fuerza de ventas',
+            description:
+                'Agencias, asesores y metas comerciales cargadas desde los scripts del profesor.',
+            color: _AppColors.teal,
+          ),
           _SectionTitle('Agencias'),
           ...data.agencies.map((agency) => _AgencyTile(agency: agency)),
           const SizedBox(height: 18),
           _SectionTitle('Asesores de negocio'),
           ...data.advisors.map((advisor) => _AdvisorTile(advisor: advisor)),
         ],
+      ),
+    );
+  }
+}
+
+class _DashboardHeader extends StatelessWidget {
+  const _DashboardHeader({
+    required this.name,
+    required this.email,
+    required this.district,
+    required this.segment,
+  });
+
+  final String name;
+  final String email;
+  final String district;
+  final String segment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: _boxDecoration(accent: _AppColors.lime),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: _AppColors.green.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(
+                  Icons.person,
+                  color: _AppColors.green,
+                  size: 30,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  'Hola $name',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    height: 1.05,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _InfoChip(
+                icon: Icons.email_outlined,
+                text: email,
+                color: _AppColors.blue,
+              ),
+              _InfoChip(
+                icon: Icons.location_on_outlined,
+                text: district,
+                color: _AppColors.teal,
+              ),
+              _StatusPill(text: _pretty(segment), color: _AppColors.green),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 260),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionIntro extends StatelessWidget {
+  const _SectionIntro({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: _boxDecoration(accent: color),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  description,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricStrip extends StatelessWidget {
+  const _MetricStrip({required this.metrics});
+
+  final List<_MetricItem> metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth > 640;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: metrics.map((metric) {
+            final width = isWide
+                ? (constraints.maxWidth - 24) / 3
+                : constraints.maxWidth;
+            return SizedBox(
+              width: width,
+              child: _MetricCard(metric: metric),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.metric});
+
+  final _MetricItem metric;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _boxDecoration(accent: metric.color),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: metric.color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(metric.icon, color: metric.color, size: 21),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  metric.label,
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+                Text(
+                  metric.value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricItem {
+  const _MetricItem(this.icon, this.label, this.value, this.color);
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _LightPill extends StatelessWidget {
+  const _LightPill({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
@@ -345,7 +746,6 @@ class _CreditHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const green = Color(0xFF007A3D);
     final amount = _number(
       credit,
       'monto_aprobado',
@@ -354,24 +754,43 @@ class _CreditHero extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: green,
+        gradient: const LinearGradient(
+          colors: [_AppColors.green, _AppColors.deepGreen],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 12,
-            offset: const Offset(0, 8),
+            color: _AppColors.green.withValues(alpha: 0.24),
+            blurRadius: 18,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Credito preaprobado',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Credito preaprobado',
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+              ),
+              _LightPill(
+                text: _pretty(
+                  _text(
+                    credit,
+                    'segmento',
+                    fallback: _text(score, 'segmento_preliminar'),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
@@ -384,7 +803,7 @@ class _CreditHero extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '${_pretty(_text(credit, 'estado', fallback: 'preaprobado'))} · ${_pretty(_text(credit, 'segmento', fallback: _text(score, 'segmento_preliminar')))}',
+            '${_pretty(_text(credit, 'estado', fallback: 'preaprobado'))} - cuota ${_money(_number(credit, 'cuota_mensual'))}',
             style: const TextStyle(color: Colors.white70),
           ),
         ],
@@ -410,7 +829,7 @@ class _ScorePanel extends StatelessWidget {
 
     return Container(
       padding: const EdgeInsets.all(18),
-      decoration: _boxDecoration(),
+      decoration: _boxDecoration(accent: _AppColors.blue),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -430,7 +849,7 @@ class _ScorePanel extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 30,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF007A3D),
+                  color: _AppColors.green,
                 ),
               ),
             ],
@@ -440,6 +859,7 @@ class _ScorePanel extends StatelessWidget {
             value: progress,
             minHeight: 10,
             borderRadius: BorderRadius.circular(999),
+            color: _AppColors.green,
             backgroundColor: const Color(0xFFE3EBE6),
           ),
           const SizedBox(height: 12),
@@ -468,10 +888,11 @@ class _ScoreBreakdown extends StatelessWidget {
     return Column(
       children: items.map((item) {
         final value = _number(score, item.$2);
+        final color = _scoreColor(item.$1);
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.all(14),
-          decoration: _boxDecoration(),
+          decoration: _boxDecoration(accent: color),
           child: Row(
             children: [
               Expanded(child: Text(item.$1)),
@@ -481,6 +902,8 @@ class _ScoreBreakdown extends StatelessWidget {
                   value: (value / item.$3).clamp(0, 1).toDouble(),
                   minHeight: 8,
                   borderRadius: BorderRadius.circular(999),
+                  color: color,
+                  backgroundColor: color.withValues(alpha: 0.14),
                 ),
               ),
               const SizedBox(width: 12),
@@ -522,14 +945,23 @@ class _InfoGrid extends StatelessWidget {
           ),
           itemBuilder: (context, index) {
             final item = items[index];
+            final accent = _toneColor(index);
             return Container(
               padding: const EdgeInsets.all(14),
-              decoration: _boxDecoration(),
+              decoration: _boxDecoration(accent: accent),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(item.icon, color: const Color(0xFF007A3D)),
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(item.icon, color: accent, size: 20),
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     item.label,
@@ -574,7 +1006,7 @@ class _AgencyTile extends StatelessWidget {
     return _DataTile(
       icon: Icons.account_balance,
       title: _text(agency, 'nombre'),
-      subtitle: '${_text(agency, 'codigo')} · ${_text(agency, 'region')}',
+      subtitle: '${_text(agency, 'codigo')} - ${_text(agency, 'region')}',
       trailing:
           '${_number(agency, 'total_asesores').toStringAsFixed(0)} asesores',
     );
@@ -591,7 +1023,7 @@ class _AdvisorTile extends StatelessWidget {
     return _DataTile(
       icon: Icons.badge,
       title: _text(advisor, 'nombre_completo'),
-      subtitle: '${_text(advisor, 'nivel')} · ${_text(advisor, 'agencia')}',
+      subtitle: '${_text(advisor, 'nivel')} - ${_text(advisor, 'agencia')}',
       trailing: '${_number(advisor, 'creditos_meta').toStringAsFixed(0)} metas',
     );
   }
@@ -608,7 +1040,7 @@ class _KpiTile extends StatelessWidget {
       icon: Icons.analytics,
       title: _text(kpi, 'agencia', fallback: 'Piloto'),
       subtitle:
-          '${_number(kpi, 'desembolsos').toStringAsFixed(0)} desembolsos · Mora 30: ${_number(kpi, 'mora_30_pct').toStringAsFixed(1)}%',
+          '${_number(kpi, 'desembolsos').toStringAsFixed(0)} desembolsos - Mora 30: ${_number(kpi, 'mora_30_pct').toStringAsFixed(1)}%',
       trailing: '${_number(kpi, 'tasa_conversion_pct').toStringAsFixed(1)}%',
     );
   }
@@ -654,12 +1086,12 @@ class _DataTile extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
-      decoration: _boxDecoration(),
+      decoration: _boxDecoration(accent: _AppColors.green),
       child: Row(
         children: [
           CircleAvatar(
             backgroundColor: const Color(0xFFE8F5E9),
-            foregroundColor: const Color(0xFF007A3D),
+            foregroundColor: _AppColors.green,
             child: Icon(icon),
           ),
           const SizedBox(width: 12),
@@ -720,11 +1152,24 @@ class _SectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Text(
-        text,
-        style: Theme.of(
-          context,
-        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+      child: Row(
+        children: [
+          Container(
+            width: 5,
+            height: 24,
+            decoration: BoxDecoration(
+              color: _AppColors.green,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            text,
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+        ],
       ),
     );
   }
@@ -748,7 +1193,7 @@ class _Banner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, color: const Color(0xFF8A6200)),
+          Icon(icon, color: _AppColors.orange),
           const SizedBox(width: 10),
           Expanded(child: Text(text)),
         ],
@@ -776,7 +1221,7 @@ class _StateMessage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 56, color: const Color(0xFF007A3D)),
+            Icon(icon, size: 56, color: _AppColors.green),
             const SizedBox(height: 12),
             Text(
               title,
@@ -807,13 +1252,14 @@ class _LoadingDashboard extends StatelessWidget {
   }
 }
 
-BoxDecoration _boxDecoration() {
+BoxDecoration _boxDecoration({Color accent = _AppColors.green}) {
   return BoxDecoration(
     color: Colors.white,
     borderRadius: BorderRadius.circular(18),
+    border: Border(left: BorderSide(color: accent, width: 4)),
     boxShadow: [
       BoxShadow(
-        color: Colors.black.withValues(alpha: 0.06),
+        color: accent.withValues(alpha: 0.08),
         blurRadius: 10,
         offset: const Offset(0, 5),
       ),
@@ -821,11 +1267,48 @@ BoxDecoration _boxDecoration() {
   );
 }
 
+Color _toneColor(int index) {
+  const colors = [
+    _AppColors.green,
+    _AppColors.blue,
+    _AppColors.orange,
+    _AppColors.teal,
+    _AppColors.purple,
+    _AppColors.red,
+  ];
+
+  return colors[index % colors.length];
+}
+
+Color _scoreColor(String label) {
+  return switch (label) {
+    'Saldo' => _AppColors.green,
+    'Regularidad' => _AppColors.blue,
+    'Disciplina' => _AppColors.teal,
+    'Vinculo' => _AppColors.purple,
+    _ => _AppColors.orange,
+  };
+}
+
 String _text(Map<String, dynamic> row, String key, {String fallback = ''}) {
   final value = row[key];
   if (value == null) return fallback;
   final text = value.toString();
   return text.isEmpty ? fallback : text;
+}
+
+String _displayName(String email, Map<String, dynamic> profile) {
+  final emailName = email.contains('@') ? email.split('@').first : '';
+  if (emailName.isNotEmpty && emailName != 'cliente Supabase') {
+    return emailName;
+  }
+
+  final firstName = _text(
+    profile,
+    'nombres',
+    fallback: 'cliente',
+  ).trim().split(RegExp(r'\s+')).first;
+  return firstName.isEmpty ? 'cliente' : firstName;
 }
 
 num _number(Map<String, dynamic> row, String key, {num fallback = 0}) {

@@ -11,7 +11,17 @@ Los archivos SQL del profesor se mantienen sin cambios en la carpeta anterior al
 5. Ejecutar `supabase/sql/02_compatibilidad_antes_seed_1800.sql`.
 6. Ejecutar `supabase/sql/03_seed_scoring_1800_compatible.sql`.
 
-## Variables para correr la app
+## Conexion Supabase de la app
+
+La app ya tiene configurado un proyecto Supabase por defecto en
+`lib/supabase_config.dart`, por eso puede ejecutarse directamente:
+
+```bash
+flutter run
+```
+
+Si se necesita apuntar a otro proyecto Supabase, se pueden sobrescribir las
+credenciales con `--dart-define`:
 
 ```bash
 flutter run \
@@ -19,7 +29,9 @@ flutter run \
   --dart-define=SUPABASE_ANON_KEY=TU_ANON_KEY
 ```
 
-Si no se envian esas variables, la app abre en modo demo para mostrar el frontend.
+El modo demo existe en el codigo para pruebas del frontend, pero con la
+configuracion actual la app intenta conectarse al Supabase configurado por
+defecto.
 
 ## Tablas y vistas que consume la app
 
