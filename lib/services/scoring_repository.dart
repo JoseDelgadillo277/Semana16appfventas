@@ -588,6 +588,28 @@ class ScoringRepository {
         .eq('id', client.id);
   }
 
+  Future<void> updateBusinessLocation({
+    required PreapprovedClient client,
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final supabase = Supabase.instance.client;
+
+    await supabase
+        .from('perfiles_clientes')
+        .update({
+          'lat_negocio': latitude,
+          'lng_negocio': longitude,
+          'direccion_negocio': address.isEmpty
+              ? _text(client.profile, 'direccion_negocio')
+              : address,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('user_id', client.userId);
+  }
+
   Future<void> registerVisitResult({
     required PreapprovedClient client,
     required String result,

@@ -2,6 +2,7 @@ import 'package:bancofalabella_app2/services/scoring_repository.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -172,7 +173,9 @@ class _HomePageState extends State<HomePage> {
             _RouteTab(
               clients: effectiveData.portfolio,
               selected: selectedClient,
+              repository: repository,
               onSelect: (index) => setState(() => selectedClientIndex = index),
+              onLocationUpdated: refresh,
             ),
             _FieldFileTab(
               client: selectedClient,
@@ -402,26 +405,40 @@ class _PortfolioTab extends StatelessWidget {
   }
 }
 
-class _RouteTab extends StatelessWidget {
+class _RouteTab extends StatefulWidget {
   const _RouteTab({
     required this.clients,
     required this.selected,
+    required this.repository,
     required this.onSelect,
+    required this.onLocationUpdated,
   });
 
   final List<PreapprovedClient> clients;
   final PreapprovedClient? selected;
+  final ScoringRepository repository;
   final ValueChanged<int> onSelect;
+  final VoidCallback onLocationUpdated;
+
+  @override
+  State<_RouteTab> createState() => _RouteTabState();
+}
+
+class _RouteTabState extends State<_RouteTab> {
+  PreapprovedClient? routeSelected;
+
+  @override
+  void didUpdateWidget(covariant _RouteTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selected != oldWidget.selected) {
+      routeSelected = widget.selected;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (clients.isEmpty) {
-      return const _StateMessage(
-        icon: Icons.route,
-        title: 'Ruta sin clientes',
-        message: 'Cuando la cartera cargue, aqui aparecera el plan de visitas.',
-      );
-    }
+    final routeClients = [_plazaVeaHuancayoRouteClient(), ...widget.clients];
+    final activeClient = routeSelected ?? widget.selected ?? routeClients.first;
 
     return _PagePadding(
       child: Column(
@@ -434,14 +451,13 @@ class _RouteTab extends StatelessWidget {
                 'Mapa operativo con pins simulados, coordenadas y orden sugerido de visita.',
             color: _AppColors.teal,
           ),
-          _RouteMap(clients: clients, selected: selected),
+          _RouteMap(clients: routeClients, selected: activeClient),
           const SizedBox(height: 18),
           Row(
             children: [
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: () =>
-                      _openNavigation(context, selected ?? clients.first),
+                  onPressed: () => _openNavigation(context, activeClient),
                   icon: const Icon(Icons.navigation),
                   label: const Text('Navegar'),
                 ),
@@ -449,8 +465,12 @@ class _RouteTab extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () =>
-                      _captureLocation(context, selected ?? clients.first),
+                  onPressed: () => _captureBusinessLocation(
+                    context: context,
+                    repository: widget.repository,
+                    client: activeClient,
+                    onUpdated: widget.onLocationUpdated,
+                  ),
                   icon: const Icon(Icons.my_location),
                   label: const Text('GPS negocio'),
                 ),
@@ -459,14 +479,18 @@ class _RouteTab extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           _SectionTitle('Visitas del dia'),
-          for (var i = 0; i < clients.length; i++)
+          for (var i = 0; i < routeClients.length; i++)
             _DataTile(
               icon: Icons.location_on,
-              title: clients[i].fullName,
-              subtitle: '${clients[i].business} - ${clients[i].district}',
-              trailing: '${clients[i].scoreValue.toStringAsFixed(0)}/800',
-              color: _segmentColor(clients[i].segment),
-              onTap: () => onSelect(i),
+              title: routeClients[i].fullName,
+              subtitle:
+                  '${routeClients[i].business} - ${routeClients[i].district}',
+              trailing: '${routeClients[i].scoreValue.toStringAsFixed(0)}/800',
+              color: _segmentColor(routeClients[i].segment),
+              onTap: () {
+                setState(() => routeSelected = routeClients[i]);
+                if (i > 0) widget.onSelect(i - 1);
+              },
             ),
         ],
       ),
@@ -477,50 +501,209 @@ class _RouteTab extends StatelessWidget {
     BuildContext context,
     PreapprovedClient client,
   ) async {
-    final uri = Uri.parse(
-      'https://www.google.com/maps/search/?api=1&query=${client.lat},${client.lng}',
+    final wazeUri = Uri.parse(
+      'waze://?ll=${client.lat},${client.lng}&navigate=yes',
     );
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
-        context.mounted) {
+    final mapsAppUri = Uri.parse(
+      'google.navigation:q=${client.lat},${client.lng}&mode=d',
+    );
+    final mapsWebUri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=${client.lat},${client.lng}&travelmode=driving',
+    );
+
+    final opened =
+        await _tryOpenNavigationApp(wazeUri) ||
+        await _tryOpenNavigationApp(mapsAppUri) ||
+        await _tryOpenNavigationApp(mapsWebUri);
+
+    if (!opened && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo abrir la navegacion')),
       );
     }
   }
 
-  Future<void> _captureLocation(
-    BuildContext context,
-    PreapprovedClient client,
-  ) async {
+  Future<bool> _tryOpenNavigationApp(Uri uri) async {
     try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Permiso de ubicacion denegado')),
-        );
-        return;
-      }
-      final position = await Geolocator.getCurrentPosition();
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'GPS capturado: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
-          ),
-        ),
-      );
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('GPS no disponible: $error')));
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      return false;
     }
   }
+}
+
+PreapprovedClient _plazaVeaHuancayoRouteClient() {
+  return const PreapprovedClient(
+    credit: {
+      'id': 'ruta-plaza-vea-huancayo',
+      'user_id': 'ruta-plaza-vea-huancayo-user',
+      'score_transaccional': 704,
+      'score_final': 704,
+      'monto_hipotesis': 5000,
+      'monto_aprobado': 4200,
+      'segmento': 'PREMIER',
+      'estado': 'destino_ruta',
+    },
+    profile: {
+      'user_id': 'ruta-plaza-vea-huancayo-user',
+      'nombres': 'Plaza Vea',
+      'apellidos': 'Huancayo',
+      'dni': '00000678',
+      'distrito': 'Huancayo',
+      'departamento': 'Junin',
+      'tipo_negocio': 'Supermercado',
+      'nombre_negocio': 'Plaza Vea Huancayo',
+      'direccion_negocio': 'Plaza Vea Huancayo',
+      'lat_negocio': -12.057912,
+      'lng_negocio': -75.2168002,
+    },
+    score: {
+      'score_transaccional': 704,
+      'segmento_preliminar': 'PREMIER',
+      'monto_hipotesis': 5000,
+    },
+    fieldFile: {},
+    assignment: {
+      'prioridad': 'alta',
+      'score_prioridad': 88,
+      'estado_visita': 'pendiente',
+      'tipo_gestion': 'DESTINO_RUTA',
+    },
+  );
+}
+
+Future<void> _captureBusinessLocation({
+  required BuildContext context,
+  required ScoringRepository repository,
+  required PreapprovedClient client,
+  required VoidCallback onUpdated,
+}) async {
+  try {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Obteniendo senal GPS...')),
+    );
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Permiso de ubicacion denegado')),
+      );
+      return;
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 15),
+      ),
+    );
+    final address = await _reverseGeocode(position);
+    if (!context.mounted) return;
+
+    final confirmedAddress = await _confirmBusinessLocation(
+      context: context,
+      client: client,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      address: address,
+    );
+    if (confirmedAddress == null) return;
+
+    await repository.updateBusinessLocation(
+      client: client,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      address: confirmedAddress,
+    );
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Ubicacion actualizada: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
+        ),
+      ),
+    );
+    onUpdated();
+  } catch (error) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('GPS no disponible: $error')));
+  }
+}
+
+Future<String> _reverseGeocode(Position position) async {
+  try {
+    final places = await placemarkFromCoordinates(
+      position.latitude,
+      position.longitude,
+    );
+    if (places.isEmpty) return 'Direccion no encontrada';
+    final place = places.first;
+    return [
+      place.street,
+      place.subLocality,
+      place.locality,
+      place.administrativeArea,
+    ].where((part) => part != null && part.trim().isNotEmpty).join(', ');
+  } catch (_) {
+    return 'Direccion no encontrada';
+  }
+}
+
+Future<String?> _confirmBusinessLocation({
+  required BuildContext context,
+  required PreapprovedClient client,
+  required double latitude,
+  required double longitude,
+  required String address,
+}) {
+  final controller = TextEditingController(text: address);
+  return showDialog<String>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Confirmar ubicacion'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            client.fullName,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'GPS: ${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}',
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              labelText: 'Direccion aproximada',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 2,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('Descartar'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+          child: const Text('Confirmar'),
+        ),
+      ],
+    ),
+  ).whenComplete(controller.dispose);
 }
 
 class _FieldFileTab extends StatefulWidget {
@@ -607,6 +790,20 @@ class _FieldFileTabState extends State<_FieldFileTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _ClientSummary(client: client),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => _captureBusinessLocation(
+              context: context,
+              repository: widget.repository,
+              client: client,
+              onUpdated: widget.onSubmitted,
+            ),
+            icon: const Icon(Icons.my_location),
+            label: const Text('Actualizar ubicacion del negocio'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+          ),
           const SizedBox(height: 16),
           _ScoreSummary(result: result, transactionalScore: client.scoreValue),
           const SizedBox(height: 18),

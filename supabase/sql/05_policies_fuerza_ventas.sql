@@ -13,6 +13,8 @@
 GRANT USAGE ON SCHEMA public TO authenticated;
 
 GRANT SELECT ON public.perfiles_clientes TO authenticated;
+GRANT UPDATE (direccion_negocio, lat_negocio, lng_negocio, updated_at)
+  ON public.perfiles_clientes TO authenticated;
 GRANT SELECT ON public.scores_transaccionales TO authenticated;
 GRANT SELECT ON public.creditos_preaprobados TO authenticated;
 GRANT SELECT, INSERT ON public.fichas_campo TO authenticated;
@@ -32,6 +34,14 @@ CREATE POLICY "FV lee perfiles de cartera"
   ON public.perfiles_clientes FOR SELECT
   TO authenticated
   USING (true);
+
+DROP POLICY IF EXISTS "FV actualiza ubicacion de negocio"
+  ON public.perfiles_clientes;
+CREATE POLICY "FV actualiza ubicacion de negocio"
+  ON public.perfiles_clientes FOR UPDATE
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
 
 DROP POLICY IF EXISTS "FV lee scores de cartera"
   ON public.scores_transaccionales;
