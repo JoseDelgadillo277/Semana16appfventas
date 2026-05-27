@@ -12,6 +12,8 @@ Los archivos SQL del profesor se mantienen sin cambios en la carpeta anterior al
 6. Ejecutar `supabase/sql/03_seed_scoring_1800_compatible.sql`.
 7. Ejecutar `supabase/sql/04_usuario_prueba_alumno1.sql`.
 8. Ejecutar `supabase/sql/05_policies_fuerza_ventas.sql`.
+9. Ejecutar `supabase/sql/06_semana11_hu_fuerza_ventas.sql`.
+10. Ejecutar `supabase/sql/07_rubrica_final_fuerza_ventas.sql`.
 
 ## Conexion Supabase de la app
 
@@ -45,6 +47,16 @@ defecto.
 - `vw_pbi_asesores`
 - `vw_pbi_fichas_campo`
 - `vw_pbi_kpis_piloto`
+- `cartera_diaria`
+- `solicitudes_credito`
+- `solicitudes_documentos`
+- `consultas_buro`
+- `acciones_cobranza`
+- `alertas_cartera`
+- `fv_usuarios_perfiles`
+- `fv_sync_queue`
+- `fv_eventos_realtime`
+- `fv_pdfs_generados`
 
 ## Observaciones sin editar los SQL originales
 
@@ -55,3 +67,5 @@ defecto.
 - Si el profesor pide mantener los SQL intactos, esos ajustes deben manejarse como setup complementario o desde Supabase antes de cargar la data.
 - `03_seed_scoring_1800_compatible.sql` es una copia del seed de 1,800 clientes con un casteo a `BIGINT` para evitar overflow al generar telefonos. El original del profesor no se modifica.
 - `05_policies_fuerza_ventas.sql` es complementario: no cambia los SQL del profesor, solo habilita permisos para el usuario autenticado de la app de asesores.
+- `06_semana11_hu_fuerza_ventas.sql` agrega las tablas operativas solicitadas en la guia S11 y genera datos demo desde la cartera ya cargada.
+- `07_rubrica_final_fuerza_ventas.sql` agrega perfiles, cola offline, bucket `documentos-credito`, eventos y PDFs para cerrar la rubrica final.

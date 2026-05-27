@@ -1,5 +1,12 @@
 import 'package:bancofalabella_app2/services/scoring_repository.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class _AppColors {
   static const green = Color(0xFF007A3D);
@@ -30,11 +37,21 @@ class _HomePageState extends State<HomePage> {
   int selectedClientIndex = 0;
   String segmentFilter = 'TODOS';
   String statusFilter = 'TODOS';
+  String searchQuery = '';
+  bool online = true;
 
   @override
   void initState() {
     super.initState();
     dashboardFuture = repository.loadDashboard(forceDemo: widget.demoMode);
+    Connectivity().checkConnectivity().then((result) {
+      if (!mounted) return;
+      setState(() => online = !result.contains(ConnectivityResult.none));
+    });
+    Connectivity().onConnectivityChanged.listen((result) {
+      if (!mounted) return;
+      setState(() => online = !result.contains(ConnectivityResult.none));
+    });
   }
 
   Future<void> refresh() async {
@@ -109,41 +126,72 @@ class _HomePageState extends State<HomePage> {
           }
 
           final data = snapshot.data!;
-          final filtered = _filteredClients(data.portfolio);
-          final safeSelectedIndex = data.portfolio.isEmpty
+          final effectiveData = SalesDashboardData(
+            advisor: data.advisor,
+            portfolio: data.portfolio,
+            agencies: data.agencies,
+            advisors: data.advisors,
+            kpis: data.kpis,
+            history: data.history,
+            requests: data.requests,
+            bureau: data.bureau,
+            alerts: data.alerts,
+            collections: data.collections,
+            pendingSync: data.pendingSync,
+            lastSyncLabel: data.lastSyncLabel,
+            role: data.role,
+            online: online,
+            isDemo: data.isDemo,
+          );
+          final filtered = _filteredClients(effectiveData.portfolio);
+          final safeSelectedIndex = effectiveData.portfolio.isEmpty
               ? 0
-              : selectedClientIndex.clamp(0, data.portfolio.length - 1).toInt();
-          final selectedClient = data.portfolio.isEmpty
+              : selectedClientIndex
+                    .clamp(0, effectiveData.portfolio.length - 1)
+                    .toInt();
+          final selectedClient = effectiveData.portfolio.isEmpty
               ? null
-              : data.portfolio[safeSelectedIndex];
+              : effectiveData.portfolio[safeSelectedIndex];
 
           final pages = [
             _PortfolioTab(
-              data: data,
+              data: effectiveData,
               clients: filtered,
               segmentFilter: segmentFilter,
               statusFilter: statusFilter,
+              searchQuery: searchQuery,
               onSegmentChanged: (value) =>
                   setState(() => segmentFilter = value),
               onStatusChanged: (value) => setState(() => statusFilter = value),
+              onSearchChanged: (value) => setState(() => searchQuery = value),
               onOpenFieldFile: (client) =>
-                  openFieldFile(data.portfolio.indexOf(client)),
+                  openFieldFile(effectiveData.portfolio.indexOf(client)),
               onOpenRoute: (client) =>
-                  openRoute(data.portfolio.indexOf(client)),
+                  openRoute(effectiveData.portfolio.indexOf(client)),
             ),
             _RouteTab(
-              clients: data.portfolio,
+              clients: effectiveData.portfolio,
               selected: selectedClient,
               onSelect: (index) => setState(() => selectedClientIndex = index),
             ),
             _FieldFileTab(
               client: selectedClient,
-              data: data,
+              data: effectiveData,
               repository: repository,
               onSubmitted: refresh,
             ),
-            _TrackingTab(data: data),
-            _NetworkTab(data: data),
+            _ApplicationTab(
+              client: selectedClient,
+              data: effectiveData,
+              repository: repository,
+              onSubmitted: refresh,
+            ),
+            _TrackingTab(data: effectiveData, repository: repository),
+            _MoreTab(
+              data: effectiveData,
+              selected: selectedClient,
+              repository: repository,
+            ),
           ];
 
           return AnimatedSwitcher(
@@ -175,14 +223,19 @@ class _HomePageState extends State<HomePage> {
             label: 'Ficha',
           ),
           NavigationDestination(
+            icon: Icon(Icons.request_page_outlined),
+            selectedIcon: Icon(Icons.request_page),
+            label: 'Solicitud',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.rule_outlined),
             selectedIcon: Icon(Icons.rule),
             label: 'Estados',
           ),
           NavigationDestination(
-            icon: Icon(Icons.groups_outlined),
-            selectedIcon: Icon(Icons.groups),
-            label: 'Red',
+            icon: Icon(Icons.dashboard_customize_outlined),
+            selectedIcon: Icon(Icons.dashboard_customize),
+            label: 'Mas',
           ),
         ],
       ),
@@ -193,8 +246,21 @@ class _HomePageState extends State<HomePage> {
     return clients.where((client) {
       final bySegment =
           segmentFilter == 'TODOS' || client.segment == segmentFilter;
-      final byStatus = statusFilter == 'TODOS' || client.status == statusFilter;
-      return bySegment && byStatus;
+      final byStatus = switch (statusFilter) {
+        'TODOS' => true,
+        'visitado' => client.visitStatus == 'visitado',
+        'pendiente' => client.visitStatus == 'pendiente',
+        _ =>
+          client.managementType == statusFilter ||
+              client.status == statusFilter,
+      };
+      final query = searchQuery.trim().toLowerCase();
+      final byQuery =
+          query.isEmpty ||
+          client.fullName.toLowerCase().contains(query) ||
+          client.maskedDocument.toLowerCase().contains(query) ||
+          _text(client.profile, 'dni').endsWith(query);
+      return bySegment && byStatus && byQuery;
     }).toList();
   }
 }
@@ -205,8 +271,10 @@ class _PortfolioTab extends StatelessWidget {
     required this.clients,
     required this.segmentFilter,
     required this.statusFilter,
+    required this.searchQuery,
     required this.onSegmentChanged,
     required this.onStatusChanged,
+    required this.onSearchChanged,
     required this.onOpenFieldFile,
     required this.onOpenRoute,
   });
@@ -215,17 +283,21 @@ class _PortfolioTab extends StatelessWidget {
   final List<PreapprovedClient> clients;
   final String segmentFilter;
   final String statusFilter;
+  final String searchQuery;
   final ValueChanged<String> onSegmentChanged;
   final ValueChanged<String> onStatusChanged;
+  final ValueChanged<String> onSearchChanged;
   final ValueChanged<PreapprovedClient> onOpenFieldFile;
   final ValueChanged<PreapprovedClient> onOpenRoute;
 
   @override
   Widget build(BuildContext context) {
     final pending = data.portfolio
-        .where((client) => client.status == 'preaprobado')
+        .where((client) => client.visitStatus == 'pendiente')
         .length;
-    final visits = data.portfolio.where((client) => client.hasVisit).length;
+    final visits = data.portfolio
+        .where((client) => client.visitStatus == 'visitado')
+        .length;
     final amount = data.portfolio.fold<num>(
       0,
       (sum, client) => sum + client.hypothesisAmount,
@@ -242,6 +314,12 @@ class _PortfolioTab extends StatelessWidget {
                   'Modo demo activo. El login real se mantiene con alumno1@example.com.',
             ),
           _AdvisorHeader(advisor: data.advisor),
+          const SizedBox(height: 16),
+          _SyncBanner(
+            lastSync: data.lastSyncLabel,
+            pendingSync: data.pendingSync,
+            online: data.online,
+          ),
           const SizedBox(height: 16),
           _MetricStrip(
             metrics: [
@@ -271,7 +349,31 @@ class _PortfolioTab extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 12),
+          LinearProgressIndicator(
+            value: data.portfolio.isEmpty ? 0 : visits / data.portfolio.length,
+            minHeight: 10,
+            borderRadius: BorderRadius.circular(999),
+            color: _AppColors.green,
+            backgroundColor: const Color(0xFFDCE8E0),
+          ),
           const SizedBox(height: 18),
+          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Buscar cliente o ultimos digitos de DNI',
+              prefixIcon: Icon(Icons.search),
+              border: OutlineInputBorder(),
+            ),
+            onChanged: onSearchChanged,
+          ),
+          if (searchQuery.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Filtro activo: $searchQuery',
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ],
+          const SizedBox(height: 12),
           _FilterBar(
             segmentFilter: segmentFilter,
             statusFilter: statusFilter,
@@ -334,6 +436,28 @@ class _RouteTab extends StatelessWidget {
           ),
           _RouteMap(clients: clients, selected: selected),
           const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () =>
+                      _openNavigation(context, selected ?? clients.first),
+                  icon: const Icon(Icons.navigation),
+                  label: const Text('Navegar'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      _captureLocation(context, selected ?? clients.first),
+                  icon: const Icon(Icons.my_location),
+                  label: const Text('GPS negocio'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
           _SectionTitle('Visitas del dia'),
           for (var i = 0; i < clients.length; i++)
             _DataTile(
@@ -347,6 +471,55 @@ class _RouteTab extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _openNavigation(
+    BuildContext context,
+    PreapprovedClient client,
+  ) async {
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=${client.lat},${client.lng}',
+    );
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
+        context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir la navegacion')),
+      );
+    }
+  }
+
+  Future<void> _captureLocation(
+    BuildContext context,
+    PreapprovedClient client,
+  ) async {
+    try {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Permiso de ubicacion denegado')),
+        );
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'GPS capturado: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('GPS no disponible: $error')));
+    }
   }
 }
 
@@ -633,16 +806,239 @@ class _FieldFileTabState extends State<_FieldFileTab> {
   }
 }
 
+class _ApplicationTab extends StatefulWidget {
+  const _ApplicationTab({
+    required this.client,
+    required this.data,
+    required this.repository,
+    required this.onSubmitted,
+  });
+
+  final PreapprovedClient? client;
+  final SalesDashboardData data;
+  final ScoringRepository repository;
+  final VoidCallback onSubmitted;
+
+  @override
+  State<_ApplicationTab> createState() => _ApplicationTabState();
+}
+
+class _ApplicationTabState extends State<_ApplicationTab> {
+  final amountController = TextEditingController(text: '1800');
+  final purposeController = TextEditingController(
+    text: 'Capital de trabajo para abastecimiento de mercaderia',
+  );
+  int term = 12;
+  bool conyuge = false;
+  bool garante = false;
+  bool signed = false;
+  bool sending = false;
+
+  @override
+  void dispose() {
+    amountController.dispose();
+    purposeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final client = widget.client;
+    if (client == null) {
+      return const _StateMessage(
+        icon: Icons.request_page,
+        title: 'Selecciona un cliente',
+        message: 'Desde Cartera puedes iniciar una solicitud de credito.',
+      );
+    }
+
+    final amount =
+        num.tryParse(amountController.text.replaceAll(',', '.')) ??
+        client.hypothesisAmount;
+    final factor = ScoringRepository.paymentFactor(0.60, term);
+    final payment = amount * factor;
+
+    return _PagePadding(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionIntro(
+            icon: Icons.request_page,
+            title: 'Solicitud de credito',
+            description:
+                'Stepper operativo: cliente, negocio, condiciones, firma y transmision electronica.',
+            color: _AppColors.blue,
+          ),
+          _ClientSummary(client: client),
+          const SizedBox(height: 18),
+          _SectionTitle('Paso 1 Cliente y negocio'),
+          _InfoGrid(
+            items: [
+              _InfoItem(Icons.badge, 'DNI', client.maskedDocument),
+              _InfoItem(Icons.store, 'Negocio', client.business),
+              _InfoItem(
+                Icons.calendar_month,
+                'Antiguedad',
+                '${_number(client.profile, 'antiguedad_negocio_meses').toStringAsFixed(0)} meses',
+              ),
+              _InfoItem(Icons.location_on, 'Distrito', client.district),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SectionTitle('Paso 2 Condiciones'),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: _boxDecoration(accent: _AppColors.blue),
+            child: Column(
+              children: [
+                TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Monto solicitado',
+                    prefixIcon: Icon(Icons.payments),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 12),
+                _OptionSelect(
+                  label: 'Plazo solicitado',
+                  value: term.toString(),
+                  options: const {
+                    '3': '3 meses',
+                    '6': '6 meses',
+                    '12': '12 meses',
+                  },
+                  onChanged: (value) => setState(() => term = int.parse(value)),
+                ),
+                TextField(
+                  controller: purposeController,
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Destino del credito',
+                    prefixIcon: Icon(Icons.description),
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _SectionTitle('Paso 3 Evaluacion familiar'),
+          _SwitchRow(
+            title: 'Declara conyuge',
+            value: conyuge,
+            onChanged: (value) => setState(() => conyuge = value),
+          ),
+          _SwitchRow(
+            title: 'Incluye garante',
+            value: garante,
+            onChanged: (value) => setState(() => garante = value),
+          ),
+          const SizedBox(height: 18),
+          _SectionTitle('Paso 4 Simulador y firma'),
+          _MetricStrip(
+            metrics: [
+              _MetricItem(Icons.percent, 'TEA ref.', '60%', _AppColors.orange),
+              _MetricItem(
+                Icons.receipt,
+                'Cuota',
+                _money(payment),
+                _AppColors.purple,
+              ),
+              _MetricItem(
+                Icons.verified,
+                'Estado',
+                signed ? 'FIRMADO' : 'PENDIENTE',
+                signed ? _AppColors.green : _AppColors.red,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => signed = true),
+            icon: Icon(signed ? Icons.draw : Icons.gesture),
+            label: Text(
+              signed ? 'Firma digital capturada' : 'Capturar firma digital',
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: sending || !signed
+                ? null
+                : () => _submit(client, amount, purposeController.text),
+            icon: sending
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.cloud_upload),
+            label: const Text('Transmitir solicitud'),
+            style: FilledButton.styleFrom(
+              backgroundColor: _AppColors.green,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(double.infinity, 52),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submit(
+    PreapprovedClient client,
+    num amount,
+    String purpose,
+  ) async {
+    setState(() => sending = true);
+    try {
+      await widget.repository.submitCreditApplication(
+        client: client,
+        advisor: widget.data.advisor,
+        amount: amount,
+        term: term,
+        purpose: purpose,
+        signature: 'firma_demo_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Solicitud transmitida al comite')),
+      );
+      widget.onSubmitted();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo transmitir: $error'),
+          backgroundColor: _AppColors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+  }
+}
+
 class _TrackingTab extends StatelessWidget {
-  const _TrackingTab({required this.data});
+  const _TrackingTab({required this.data, required this.repository});
 
   final SalesDashboardData data;
+  final ScoringRepository repository;
 
   @override
   Widget build(BuildContext context) {
     final states = <String, int>{};
-    for (final client in data.portfolio) {
-      states.update(client.status, (value) => value + 1, ifAbsent: () => 1);
+    for (final request in data.requests) {
+      final state = _text(request, 'estado', fallback: 'borrador');
+      states.update(state, (value) => value + 1, ifAbsent: () => 1);
+    }
+    if (states.isEmpty) {
+      for (final client in data.portfolio) {
+        states.update(client.status, (value) => value + 1, ifAbsent: () => 1);
+      }
     }
 
     return _PagePadding(
@@ -667,6 +1063,32 @@ class _TrackingTab extends StatelessWidget {
                   ),
                 )
                 .toList(),
+          ),
+          const SizedBox(height: 18),
+          _SectionTitle('Transmision electronica'),
+          ...data.requests
+              .take(6)
+              .map(
+                (request) => _DataTile(
+                  icon: Icons.cloud_upload,
+                  title: _text(
+                    request,
+                    'numero_expediente',
+                    fallback: 'Expediente sin numero',
+                  ),
+                  subtitle:
+                      '${_pretty(_text(request, 'estado'))} - ${_money(_number(request, 'monto_solicitado'))}',
+                  trailing:
+                      '${_number(request, 'plazo_meses').toStringAsFixed(0)}m',
+                  color: _AppColors.blue,
+                ),
+              ),
+          OutlinedButton.icon(
+            onPressed: data.requests.isEmpty
+                ? null
+                : () => _generatePdf(context, data.requests.first),
+            icon: const Icon(Icons.picture_as_pdf),
+            label: const Text('Generar PDF de expediente'),
           ),
           const SizedBox(height: 18),
           _SectionTitle('Historial de visitas'),
@@ -702,12 +1124,47 @@ class _TrackingTab extends StatelessWidget {
       ),
     );
   }
+
+  Future<void> _generatePdf(
+    BuildContext context,
+    Map<String, dynamic> request,
+  ) async {
+    final expediente = _text(
+      request,
+      'numero_expediente',
+      fallback: 'EXP-DEMO',
+    );
+    final doc = pw.Document();
+    doc.addPage(
+      pw.Page(
+        build: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text('Banco Falabella - Expediente de credito'),
+            pw.SizedBox(height: 12),
+            pw.Text('Numero: $expediente'),
+            pw.Text('Estado: ${_pretty(_text(request, 'estado'))}'),
+            pw.Text('Monto: ${_money(_number(request, 'monto_solicitado'))}'),
+          ],
+        ),
+      ),
+    );
+    final bytes = await doc.save();
+    await Printing.sharePdf(bytes: bytes, filename: '$expediente.pdf');
+    await repository.registerPdf(expediente: expediente, bytes: bytes);
+  }
 }
 
-class _NetworkTab extends StatelessWidget {
-  const _NetworkTab({required this.data});
+class _MoreTab extends StatelessWidget {
+  const _MoreTab({
+    required this.data,
+    required this.selected,
+    required this.repository,
+  });
 
   final SalesDashboardData data;
+  final PreapprovedClient? selected;
+  final ScoringRepository repository;
 
   @override
   Widget build(BuildContext context) {
@@ -716,39 +1173,363 @@ class _NetworkTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _SectionIntro(
-            icon: Icons.groups,
-            title: 'Red comercial',
+            icon: Icons.dashboard_customize,
+            title: 'Modulos Semana 11',
             description:
-                'Agencias, asesores y metas cargadas desde los SQL del profesor.',
+                'Documentos, buro, cobranza, reportes, supervision y red comercial.',
             color: _AppColors.teal,
           ),
-          _SectionTitle('Agencias'),
-          ...data.agencies.map(
-            (agency) => _DataTile(
-              icon: Icons.account_balance,
-              title: _text(agency, 'nombre'),
-              subtitle:
-                  '${_text(agency, 'codigo')} - ${_text(agency, 'region')}',
-              trailing:
-                  '${_number(agency, 'total_asesores').toStringAsFixed(0)} asesores',
-              color: _AppColors.green,
+          _DocumentsPanel(selected: selected, repository: repository),
+          const SizedBox(height: 18),
+          _BureauPanel(data: data, selected: selected),
+          const SizedBox(height: 18),
+          _CollectionsPanel(data: data),
+          const SizedBox(height: 18),
+          _ReportsPanel(data: data),
+          const SizedBox(height: 18),
+          _NetworkPanel(data: data),
+        ],
+      ),
+    );
+  }
+}
+
+class _NetworkPanel extends StatelessWidget {
+  const _NetworkPanel({required this.data});
+
+  final SalesDashboardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle('Red comercial'),
+        ...data.agencies
+            .take(4)
+            .map(
+              (agency) => _DataTile(
+                icon: Icons.account_balance,
+                title: _text(agency, 'nombre'),
+                subtitle:
+                    '${_text(agency, 'codigo')} - ${_text(agency, 'region')}',
+                trailing:
+                    '${_number(agency, 'total_asesores').toStringAsFixed(0)} asesores',
+                color: _AppColors.green,
+              ),
+            ),
+        ...data.advisors
+            .take(4)
+            .map(
+              (advisor) => _DataTile(
+                icon: Icons.badge,
+                title: _text(advisor, 'nombre_completo'),
+                subtitle:
+                    '${_text(advisor, 'nivel')} - ${_text(advisor, 'agencia')}',
+                trailing:
+                    '${_number(advisor, 'creditos_meta').toStringAsFixed(0)} metas',
+                color: _AppColors.blue,
+              ),
+            ),
+      ],
+    );
+  }
+}
+
+class _DocumentsPanel extends StatelessWidget {
+  const _DocumentsPanel({required this.selected, required this.repository});
+
+  final PreapprovedClient? selected;
+  final ScoringRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final docs = const [
+      ('dni_anverso', 'DNI anverso'),
+      ('dni_reverso', 'DNI reverso'),
+      ('ruc', 'RUC'),
+      ('recibo_servicios', 'Recibo servicios'),
+      ('foto_negocio', 'Foto negocio'),
+      ('contrato_arrendamiento', 'Contrato alquiler'),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle('Captura de documentos'),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: _boxDecoration(accent: _AppColors.blue),
+          child: Column(
+            children: [
+              if (selected != null)
+                Text(
+                  selected!.fullName,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              const SizedBox(height: 10),
+              ...docs.map(
+                (doc) => _DataTile(
+                  icon: Icons.photo_camera,
+                  title: doc.$2,
+                  subtitle:
+                      'Camara real, subida a Storage y registro documental',
+                  trailing: 'SUBIR',
+                  color: _AppColors.blue,
+                  onTap: selected == null
+                      ? null
+                      : () => _captureDocument(context, selected!, doc.$1),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _captureDocument(
+    BuildContext context,
+    PreapprovedClient client,
+    String type,
+  ) async {
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 72,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      final extension = image.name.split('.').last;
+      final url = await repository.uploadDocument(
+        client: client,
+        type: type,
+        bytes: bytes,
+        extension: extension,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Documento subido: $url')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo capturar/subir: $error'),
+          backgroundColor: _AppColors.red,
+        ),
+      );
+    }
+  }
+}
+
+class _BureauPanel extends StatelessWidget {
+  const _BureauPanel({required this.data, required this.selected});
+
+  final SalesDashboardData data;
+  final PreapprovedClient? selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final bureau = data.bureau.isNotEmpty
+        ? data.bureau.first
+        : const <String, dynamic>{};
+    final rating = selected == null
+        ? _text(bureau, 'calificacion_sbs', fallback: 'Normal')
+        : _text(selected!.profile, 'calificacion_sbs', fallback: 'Normal');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle('Consulta de buro y listas'),
+        _DataTile(
+          icon: Icons.verified_user,
+          title: 'Semaforo SBS: ${_pretty(rating)}',
+          subtitle:
+              'Entidades: ${_number(bureau, 'entidades_con_deuda').toStringAsFixed(0)} - Deuda: ${_money(_number(bureau, 'deuda_total_pen'))}',
+          trailing: _number(bureau, 'dias_mayor_mora').toStringAsFixed(0),
+          color: _riskColor(rating),
+        ),
+        _PaymentBehaviorChart(client: selected),
+      ],
+    );
+  }
+}
+
+class _PaymentBehaviorChart extends StatelessWidget {
+  const _PaymentBehaviorChart({required this.client});
+
+  final PreapprovedClient? client;
+
+  @override
+  Widget build(BuildContext context) {
+    final values = [
+      0,
+      0,
+      2,
+      0,
+      5,
+      0,
+      0,
+      0,
+      3,
+      0,
+      0,
+      client == null ? 0 : _number(client!.credit, 'dias_mora').toInt(),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _boxDecoration(accent: _AppColors.purple),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Comportamiento de pagos 12 meses',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 150,
+            child: BarChart(
+              BarChartData(
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                titlesData: const FlTitlesData(
+                  leftTitles: AxisTitles(),
+                  rightTitles: AxisTitles(),
+                  topTitles: AxisTitles(),
+                  bottomTitles: AxisTitles(),
+                ),
+                barGroups: [
+                  for (var i = 0; i < values.length; i++)
+                    BarChartGroupData(
+                      x: i,
+                      barRods: [
+                        BarChartRodData(
+                          toY: values[i] == 0 ? 4 : values[i].toDouble(),
+                          width: 14,
+                          color: values[i] == 0
+                              ? _AppColors.green
+                              : _AppColors.red,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 18),
-          _SectionTitle('Asesores de negocio'),
-          ...data.advisors.map(
-            (advisor) => _DataTile(
-              icon: Icons.badge,
-              title: _text(advisor, 'nombre_completo'),
-              subtitle:
-                  '${_text(advisor, 'nivel')} - ${_text(advisor, 'agencia')}',
-              trailing:
-                  '${_number(advisor, 'creditos_meta').toStringAsFixed(0)} metas',
-              color: _AppColors.blue,
-            ),
+          const SizedBox(height: 10),
+          const Text(
+            'Pago puntual: 83% - Mora promedio: 2 dias - Total pagado: S/ 4,850',
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CollectionsPanel extends StatelessWidget {
+  const _CollectionsPanel({required this.data});
+
+  final SalesDashboardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final overdue = data.portfolio
+        .where((client) => _number(client.credit, 'dias_mora') > 0)
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle('Recuperacion de cartera vencida'),
+        if (overdue.isEmpty)
+          const _DataTile(
+            icon: Icons.check_circle,
+            title: 'Sin cartera vencida critica',
+            subtitle: 'No hay clientes con mora activa en la muestra cargada.',
+            trailing: 'OK',
+            color: _AppColors.green,
+          )
+        else
+          ...overdue.map(
+            (client) => _DataTile(
+              icon: Icons.warning_amber,
+              title: client.fullName,
+              subtitle:
+                  '${client.district} - ${_number(client.credit, 'dias_mora').toStringAsFixed(0)} dias de mora',
+              trailing: _money(client.approvedAmount),
+              color: _AppColors.red,
+            ),
+          ),
+        ...data.collections.map(
+          (item) => _DataTile(
+            icon: Icons.handshake,
+            title: _pretty(_text(item, 'resultado')),
+            subtitle: _text(
+              item,
+              'observaciones',
+              fallback: 'Gestion registrada',
+            ),
+            trailing: _money(_number(item, 'monto_compromiso')),
+            color: _AppColors.orange,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReportsPanel extends StatelessWidget {
+  const _ReportsPanel({required this.data});
+
+  final SalesDashboardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final sent = data.requests
+        .where((item) => _text(item, 'estado') != 'borrador')
+        .length;
+    final approved = data.requests
+        .where(
+          (item) =>
+              _text(item, 'estado') == 'aprobado' ||
+              _text(item, 'estado') == 'desembolsado',
+        )
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle('Reportes y supervision'),
+        _MetricStrip(
+          metrics: [
+            _MetricItem(
+              Icons.request_page,
+              'Solicitudes',
+              '${data.requests.length}',
+              _AppColors.blue,
+            ),
+            _MetricItem(
+              Icons.cloud_upload,
+              'Transmitidas',
+              '$sent',
+              _AppColors.teal,
+            ),
+            _MetricItem(
+              Icons.verified,
+              'Aprobadas',
+              '$approved',
+              _AppColors.green,
+            ),
+            _MetricItem(
+              Icons.notifications,
+              'Alertas',
+              '${data.alerts.length}',
+              _AppColors.orange,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -802,12 +1583,62 @@ class _AdvisorHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.black54),
                 ),
+                Text(
+                  'Perfil: ${_text(advisor, 'perfil', fallback: 'Operador')}',
+                  style: const TextStyle(color: Colors.black54, fontSize: 12),
+                ),
               ],
             ),
           ),
           _StatusPill(
             text: _text(advisor, 'codigo', fallback: 'AG-001'),
             color: _AppColors.green,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SyncBanner extends StatelessWidget {
+  const _SyncBanner({
+    required this.lastSync,
+    required this.pendingSync,
+    required this.online,
+  });
+
+  final String lastSync;
+  final int pendingSync;
+  final bool online;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = !online
+        ? _AppColors.red
+        : (pendingSync > 0 ? _AppColors.orange : _AppColors.teal);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _boxDecoration(accent: color),
+      child: Row(
+        children: [
+          Icon(
+            !online
+                ? Icons.cloud_off
+                : (pendingSync > 0 ? Icons.cloud_upload : Icons.cloud_done),
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              pendingSync > 0
+                  ? 'Ultima actualizacion: $lastSync - $pendingSync pendientes de sincronizar'
+                  : !online
+                  ? 'Modo offline activo - se usara cache local y cola pendiente'
+                  : 'Ultima actualizacion: $lastSync - cartera disponible offline',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
           ),
         ],
       ),
@@ -847,17 +1678,16 @@ class _FilterBar extends StatelessWidget {
             onChanged: onSegmentChanged,
           ),
           _OptionSelect(
-            label: 'Estado',
+            label: 'Gestion / visita',
             value: statusFilter,
             options: const {
               'TODOS': 'Todos',
-              'preaprobado': 'Preaprobado',
-              'contactado': 'Contactado',
-              'visita_realizada': 'Visita realizada',
-              'en_comite': 'En comite',
-              'aprobado': 'Aprobado',
-              'desembolsado': 'Desembolsado',
-              'rechazado': 'Rechazado',
+              'RENOVACION': 'Renovaciones',
+              'AMPLIACION': 'Ampliaciones',
+              'NUEVA_SOLICITUD': 'Nuevas',
+              'RECUPERACION_MORA': 'En mora',
+              'visitado': 'Visitados',
+              'pendiente': 'Pendientes',
             },
             onChanged: onStatusChanged,
           ),
@@ -881,10 +1711,15 @@ class _ClientCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _segmentColor(client.segment);
+    final isVisited = client.visitStatus == 'visitado';
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      decoration: _boxDecoration(accent: color),
+      decoration: isVisited
+          ? _boxDecoration(
+              accent: Colors.blueGrey,
+            ).copyWith(color: const Color(0xFFF0F3F2))
+          : _boxDecoration(accent: color),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -904,7 +1739,7 @@ class _ClientCard extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '${client.business} - ${client.district}',
+                      '${client.maskedDocument} - ${client.business} - ${client.district}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.black54),
@@ -931,10 +1766,22 @@ class _ClientCard extends StatelessWidget {
                 _AppColors.blue,
               ),
               _MetricItem(
-                Icons.flag,
-                'Estado',
-                _pretty(client.status),
-                _AppColors.orange,
+                Icons.local_offer,
+                'Gestion',
+                _pretty(client.managementType),
+                _managementColor(client.managementType),
+              ),
+              _MetricItem(
+                Icons.priority_high,
+                'Prioridad',
+                '${_pretty(client.priority)} ${client.priorityScore.toStringAsFixed(0)}',
+                _priorityColor(client.priority),
+              ),
+              _MetricItem(
+                Icons.task_alt,
+                'Visita',
+                _pretty(client.visitStatus),
+                isVisited ? _AppColors.teal : _AppColors.orange,
               ),
             ],
           ),
@@ -1525,6 +2372,49 @@ class _MetricItem {
   final Color color;
 }
 
+class _InfoGrid extends StatelessWidget {
+  const _InfoGrid({required this.items});
+
+  final List<_InfoItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth > 680 ? 4 : 2;
+        final width = (constraints.maxWidth - (columns - 1) * 10) / columns;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: items
+              .map(
+                (item) => SizedBox(
+                  width: width,
+                  child: _MetricCard(
+                    metric: _MetricItem(
+                      item.icon,
+                      item.label,
+                      item.value,
+                      _AppColors.teal,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
+  }
+}
+
+class _InfoItem {
+  const _InfoItem(this.icon, this.label, this.value);
+
+  final IconData icon;
+  final String label;
+  final String value;
+}
+
 class _StatusPill extends StatelessWidget {
   const _StatusPill({required this.text, required this.color});
 
@@ -1796,6 +2686,37 @@ Color _segmentColor(String segment) {
     'ESTANDAR' => _AppColors.blue,
     'BASICO' => _AppColors.orange,
     'DESCALIFICADO' => _AppColors.red,
+    _ => _AppColors.teal,
+  };
+}
+
+Color _managementColor(String type) {
+  return switch (type.toUpperCase()) {
+    'RENOVACION' => _AppColors.blue,
+    'AMPLIACION' => _AppColors.green,
+    'NUEVA_SOLICITUD' => _AppColors.orange,
+    'SEGUIMIENTO' => Colors.blueGrey,
+    'RECUPERACION_MORA' => _AppColors.red,
+    'DESERTOR' => _AppColors.purple,
+    _ => _AppColors.teal,
+  };
+}
+
+Color _priorityColor(String priority) {
+  return switch (priority.toLowerCase()) {
+    'alta' => _AppColors.red,
+    'media' => _AppColors.orange,
+    _ => _AppColors.green,
+  };
+}
+
+Color _riskColor(String rating) {
+  return switch (rating.toLowerCase()) {
+    'normal' => _AppColors.green,
+    'cpp' => _AppColors.orange,
+    'deficiente' => _AppColors.orange,
+    'dudoso' => _AppColors.red,
+    'perdida' || 'pérdida' => Colors.blueGrey,
     _ => _AppColors.teal,
   };
 }

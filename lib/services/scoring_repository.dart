@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:bancofalabella_app2/supabase_config.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -11,6 +12,14 @@ class SalesDashboardData {
     required this.advisors,
     required this.kpis,
     required this.history,
+    required this.requests,
+    required this.bureau,
+    required this.alerts,
+    required this.collections,
+    required this.pendingSync,
+    required this.lastSyncLabel,
+    required this.role,
+    required this.online,
     required this.isDemo,
   });
 
@@ -20,6 +29,14 @@ class SalesDashboardData {
   final List<Map<String, dynamic>> advisors;
   final List<Map<String, dynamic>> kpis;
   final List<Map<String, dynamic>> history;
+  final List<Map<String, dynamic>> requests;
+  final List<Map<String, dynamic>> bureau;
+  final List<Map<String, dynamic>> alerts;
+  final List<Map<String, dynamic>> collections;
+  final int pendingSync;
+  final String lastSyncLabel;
+  final String role;
+  final bool online;
   final bool isDemo;
 }
 
@@ -29,12 +46,14 @@ class PreapprovedClient {
     required this.profile,
     required this.score,
     required this.fieldFile,
+    this.assignment = const {},
   });
 
   final Map<String, dynamic> credit;
   final Map<String, dynamic> profile;
   final Map<String, dynamic> score;
   final Map<String, dynamic> fieldFile;
+  final Map<String, dynamic> assignment;
 
   String get id => _text(credit, 'id');
   String get userId => _text(credit, 'user_id');
@@ -54,6 +73,20 @@ class PreapprovedClient {
     fallback: _text(score, 'segmento_preliminar', fallback: 'PENDIENTE'),
   );
   String get status => _text(credit, 'estado', fallback: 'preaprobado');
+  String get visitStatus => _text(
+    assignment,
+    'estado_visita',
+    fallback: hasVisit ? 'visitado' : 'pendiente',
+  );
+  String get managementType =>
+      _text(assignment, 'tipo_gestion', fallback: _managementTypeFromCredit());
+  String get priority =>
+      _text(assignment, 'prioridad', fallback: _priorityFromCredit());
+  num get priorityScore => _number(
+    assignment,
+    'score_prioridad',
+    fallback: _priorityScoreFromCredit(),
+  );
   num get scoreValue => _number(
     credit,
     'score_transaccional',
@@ -74,6 +107,37 @@ class PreapprovedClient {
   num get lat => _number(profile, 'lat_negocio');
   num get lng => _number(profile, 'lng_negocio');
   bool get hasVisit => fieldFile.isNotEmpty;
+  String get maskedDocument {
+    final dni = _text(profile, 'dni', fallback: '00000000');
+    if (dni.length <= 3) return '***';
+    return '***${dni.substring(dni.length - 3)}';
+  }
+
+  String _managementTypeFromCredit() {
+    if (_number(credit, 'dias_mora') > 0) return 'RECUPERACION_MORA';
+    if (status == 'desembolsado') return 'SEGUIMIENTO';
+    if (approvedAmount >= 4000) return 'RENOVACION';
+    if (segment == 'PREMIER') return 'AMPLIACION';
+    return 'NUEVA_SOLICITUD';
+  }
+
+  String _priorityFromCredit() {
+    if (_number(credit, 'dias_mora') >= 15 || approvedAmount >= 4000) {
+      return 'alta';
+    }
+    if (segment == 'PREMIER' || segment == 'ESTANDAR') return 'media';
+    return 'normal';
+  }
+
+  int _priorityScoreFromCredit() {
+    final mora = _number(credit, 'dias_mora').toInt();
+    if (mora > 0) return min(100, 40 + min(mora, 30));
+    if (approvedAmount >= 5000) return 90;
+    if (approvedAmount >= 4000) return 78;
+    if (segment == 'PREMIER') return 70;
+    if (segment == 'ESTANDAR') return 52;
+    return 35;
+  }
 }
 
 class FieldScoringInput {
@@ -348,6 +412,16 @@ class ScoringRepository {
       final profiles = _indexBy(_asList(related[0]), 'user_id');
       final scores = _indexBy(_asList(related[1]), 'id');
       final fieldFiles = _latestByUser(_asList(related[2]));
+      final assignments = _indexBy(
+        await _optionalList(
+          client
+              .from('cartera_diaria')
+              .select()
+              .inFilter('cliente_user_id', userIds)
+              .order('score_prioridad', ascending: false),
+        ),
+        'cliente_user_id',
+      );
       final portfolio = credits
           .map(
             (credit) => PreapprovedClient(
@@ -355,17 +429,78 @@ class ScoringRepository {
               profile: profiles[_text(credit, 'user_id')] ?? const {},
               score: scores[_text(credit, 'score_id')] ?? const {},
               fieldFile: fieldFiles[_text(credit, 'user_id')] ?? const {},
+              assignment: assignments[_text(credit, 'user_id')] ?? const {},
             ),
           )
           .toList();
+      portfolio.sort((a, b) => b.priorityScore.compareTo(a.priorityScore));
+
+      final requests = await _optionalList(
+        client
+            .from('solicitudes_credito')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(20),
+      );
+      final bureau = await _optionalList(
+        client
+            .from('consultas_buro')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(20),
+      );
+      final alerts = await _optionalList(
+        client
+            .from('alertas_cartera')
+            .select()
+            .order('created_at', ascending: false)
+            .limit(20),
+      );
+      final collections = await _optionalList(
+        client
+            .from('acciones_cobranza')
+            .select()
+            .order('timestamp_gestion', ascending: false)
+            .limit(20),
+      );
+      final roleRows = await _optionalList(
+        client.from('fv_usuarios_perfiles').select().limit(1),
+      );
+      final pendingRows = await _optionalList(
+        client
+            .from('fv_sync_queue')
+            .select()
+            .eq('estado', 'pendiente')
+            .limit(50),
+      );
 
       return SalesDashboardData(
-        advisor: _advisorFromSession(client.auth.currentUser?.email),
+        advisor: {
+          ..._advisorFromSession(client.auth.currentUser?.email),
+          'perfil': roleRows.isEmpty
+              ? 'Operador'
+              : _text(roleRows.first, 'perfil', fallback: 'Operador'),
+          'id': roleRows.isEmpty
+              ? 1
+              : _number(roleRows.first, 'asesor_id', fallback: 1).toInt(),
+        },
         portfolio: portfolio,
         agencies: _asList(results[1]),
         advisors: _asList(results[2]),
         kpis: _asList(results[3]),
         history: _asList(results[4]),
+        requests: requests,
+        bureau: bureau,
+        alerts: alerts,
+        collections: collections,
+        pendingSync:
+            pendingRows.length +
+            requests.where((item) => item['pendiente_sync'] == true).length,
+        lastSyncLabel: 'hoy ${_timeLabel(DateTime.now())}',
+        role: roleRows.isEmpty
+            ? 'Operador'
+            : _text(roleRows.first, 'perfil', fallback: 'Operador'),
+        online: true,
         isDemo: false,
       );
     } catch (_) {
@@ -453,6 +588,132 @@ class ScoringRepository {
         .eq('id', client.id);
   }
 
+  Future<void> registerVisitResult({
+    required PreapprovedClient client,
+    required String result,
+    required String observation,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final supabase = Supabase.instance.client;
+    final assignmentId = _text(client.assignment, 'id');
+    if (assignmentId.isEmpty) return;
+
+    await supabase
+        .from('cartera_diaria')
+        .update({
+          'estado_visita': result == 'visitado' ? 'visitado' : result,
+          'resultado_visita': result,
+          'observacion_visita': observation,
+          'timestamp_visita': DateTime.now().toIso8601String(),
+          'lat_visita': client.lat,
+          'lng_visita': client.lng,
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', assignmentId);
+  }
+
+  Future<void> submitCreditApplication({
+    required PreapprovedClient client,
+    required Map<String, dynamic> advisor,
+    required num amount,
+    required int term,
+    required String purpose,
+    required String signature,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final supabase = Supabase.instance.client;
+    final now = DateTime.now();
+    final expediente =
+        'BF-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}-${now.millisecondsSinceEpoch.toString().substring(8)}';
+    final factor = paymentFactor(0.60, term);
+    await supabase.from('solicitudes_credito').insert({
+      'numero_expediente': expediente,
+      'asesor_id': _number(advisor, 'id').toInt() == 0
+          ? null
+          : _number(advisor, 'id').toInt(),
+      'cliente_user_id': client.userId,
+      'tipo_negocio': client.business,
+      'nombre_negocio': _text(client.profile, 'nombre_negocio'),
+      'antiguedad_negocio_meses': _number(
+        client.profile,
+        'antiguedad_negocio_meses',
+      ).toInt(),
+      'ingresos_estimados': _number(
+        client.score,
+        'ingreso_promedio_ref',
+        fallback: 3000,
+      ),
+      'gastos_mensuales':
+          _number(client.score, 'ingreso_promedio_ref', fallback: 3000) * 0.45,
+      'monto_solicitado': amount,
+      'plazo_meses': term,
+      'cuota_estimada': amount * factor,
+      'destino_credito': purpose,
+      'estado': 'enviado',
+      'firma_cliente_base64': signature,
+      'lat_captura': client.lat,
+      'lng_captura': client.lng,
+    });
+  }
+
+  Future<String> uploadDocument({
+    required PreapprovedClient client,
+    required String type,
+    required Uint8List bytes,
+    required String extension,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return 'demo://$type.$extension';
+    final supabase = Supabase.instance.client;
+    final safeExtension = extension.replaceAll('.', '').toLowerCase();
+    final path =
+        '${client.userId}/$type-${DateTime.now().millisecondsSinceEpoch}.$safeExtension';
+
+    await supabase.storage
+        .from('documentos-credito')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: FileOptions(
+            contentType: safeExtension == 'png' ? 'image/png' : 'image/jpeg',
+            upsert: true,
+          ),
+        );
+
+    final url = supabase.storage.from('documentos-credito').getPublicUrl(path);
+    await supabase.from('solicitudes_documentos').insert({
+      'tipo_documento': type,
+      'storage_url': url,
+      'tamanio_kb': (bytes.length / 1024).round(),
+      'nitidez_score': min(100, bytes.length / 2048),
+    });
+    return url;
+  }
+
+  Future<void> registerPdf({
+    required String expediente,
+    required Uint8List bytes,
+  }) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final supabase = Supabase.instance.client;
+    final path =
+        'pdfs/$expediente-${DateTime.now().millisecondsSinceEpoch}.pdf';
+    await supabase.storage
+        .from('documentos-credito')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(
+            contentType: 'application/pdf',
+            upsert: true,
+          ),
+        );
+    final url = supabase.storage.from('documentos-credito').getPublicUrl(path);
+    await supabase.from('fv_pdfs_generados').insert({
+      'numero_expediente': expediente,
+      'storage_url': url,
+    });
+  }
+
   Future<void> signOut() async {
     if (SupabaseConfig.isConfigured) {
       await Supabase.instance.client.auth.signOut();
@@ -466,6 +727,7 @@ class ScoringRepository {
   }
 
   static Map<String, dynamic> _advisorFromSession(String? email) => {
+    'id': 1,
     'nombre_completo': 'Asesor Fuerza de Ventas',
     'email': email ?? 'alumno1@example.com',
     'agencia': 'Agencia Huancayo Centro',
@@ -478,6 +740,16 @@ class ScoringRepository {
     String key,
   ) {
     return {for (final row in rows) _text(row, key): row};
+  }
+
+  static Future<List<Map<String, dynamic>>> _optionalList(
+    Future<dynamic> request,
+  ) async {
+    try {
+      return _asList(await request);
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
+    }
   }
 
   static Map<String, Map<String, dynamic>> _latestByUser(
@@ -502,6 +774,10 @@ class ScoringRepository {
   static List<Map<String, dynamic>> _asList(dynamic value) {
     if (value is List) return value.map((item) => _asMap(item)).toList();
     return const <Map<String, dynamic>>[];
+  }
+
+  static String _timeLabel(DateTime dateTime) {
+    return '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
   SalesDashboardData get _demoData {
@@ -557,11 +833,13 @@ class ScoringRepository {
     return SalesDashboardData(
       isDemo: true,
       advisor: const {
+        'id': 1,
         'nombre_completo': 'Marco Sulca Vera',
         'email': 'alumno1@example.com',
         'agencia': 'Agencia Huancayo Centro',
         'nivel': 'Senior II',
         'codigo': 'AG-001-01',
+        'perfil': 'Operador',
       },
       portfolio: clients,
       agencies: const [
@@ -623,6 +901,52 @@ class ScoringRepository {
           'estado_ficha': 'completada',
         },
       ],
+      requests: const [
+        {
+          'numero_expediente': 'BF-20260526-00001',
+          'estado': 'recibido_comite',
+          'monto_solicitado': 4200,
+          'plazo_meses': 12,
+          'cuota_estimada': 475.50,
+          'created_at': '2026-05-26',
+        },
+        {
+          'numero_expediente': 'BF-20260526-00002',
+          'estado': 'borrador',
+          'monto_solicitado': 1800,
+          'plazo_meses': 6,
+          'cuota_estimada': 338.20,
+          'created_at': '2026-05-26',
+        },
+      ],
+      bureau: const [
+        {
+          'dni_consultado': '12345678',
+          'calificacion_sbs': 'Normal',
+          'entidades_con_deuda': 1,
+          'deuda_total_pen': 2500,
+          'dias_mayor_mora': 0,
+        },
+      ],
+      alerts: const [
+        {
+          'tipo_alerta': 'primer_dia_mora',
+          'mensaje': 'Revisar compromiso de pago de cliente con atraso leve.',
+          'leida': false,
+        },
+      ],
+      collections: const [
+        {
+          'resultado': 'compromiso_pago',
+          'monto_compromiso': 350,
+          'fecha_compromiso': '2026-05-30',
+          'observaciones': 'Cliente confirma pago por Yape.',
+        },
+      ],
+      pendingSync: 1,
+      lastSyncLabel: 'hoy 22:03',
+      role: 'Operador',
+      online: true,
     );
   }
 
@@ -706,6 +1030,17 @@ class ScoringRepository {
               'estado_ficha': 'completada',
             }
           : const {},
+      assignment: {
+        'id': '$id-assignment',
+        'cliente_user_id': userId,
+        'tipo_gestion': hasVisit
+            ? 'SEGUIMIENTO'
+            : (segment == 'PREMIER' ? 'AMPLIACION' : 'NUEVA_SOLICITUD'),
+        'prioridad': segment == 'PREMIER' ? 'alta' : 'media',
+        'score_prioridad': segment == 'PREMIER' ? 88 : 64,
+        'estado_visita': hasVisit ? 'visitado' : 'pendiente',
+        'fecha_asignacion': '2026-05-26',
+      },
     );
   }
 }

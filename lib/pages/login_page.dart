@@ -15,20 +15,30 @@ class _LoginPageState extends State<LoginPage> {
 
   bool loading = false;
   bool hidePassword = true;
+  int failedAttempts = 0;
+  DateTime? lockedUntil;
 
   Future<void> signIn() async {
+    final locked = lockedUntil;
+    if (locked != null && DateTime.now().isBefore(locked)) {
+      showMessage('Acceso bloqueado hasta ${_timeText(locked)}');
+      return;
+    }
     if (!formKey.currentState!.validate()) return;
 
     setState(() => loading = true);
 
     try {
       await Supabase.instance.client.auth.signInWithPassword(
-        email: emailController.text.trim(),
+        email: _loginToEmail(emailController.text.trim()),
         password: passwordController.text.trim(),
       );
+      failedAttempts = 0;
     } on AuthException catch (error) {
+      registerFailedAttempt();
       showMessage(error.message);
     } catch (_) {
+      registerFailedAttempt();
       showMessage('No se pudo iniciar sesion. Revisa tu conexion o Supabase.');
     } finally {
       if (mounted) {
@@ -41,6 +51,18 @@ class _LoginPageState extends State<LoginPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.redAccent),
     );
+  }
+
+  void registerFailedAttempt() {
+    failedAttempts += 1;
+    if (failedAttempts >= 5) {
+      lockedUntil = DateTime.now().add(const Duration(minutes: 30));
+    }
+  }
+
+  String _loginToEmail(String value) {
+    if (value.contains('@')) return value;
+    return 'asesor$value@bancofalabella.local';
   }
 
   @override
@@ -86,17 +108,18 @@ class _LoginPageState extends State<LoginPage> {
                           controller: emailController,
                           keyboardType: TextInputType.emailAddress,
                           decoration: InputDecoration(
-                            labelText: 'Correo electronico',
-                            prefixIcon: const Icon(Icons.email_outlined),
+                            labelText: 'Codigo de empleado o correo',
+                            prefixIcon: const Icon(Icons.badge_outlined),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(16),
                             ),
                           ),
                           validator: (value) {
                             final email = value?.trim() ?? '';
-                            if (email.isEmpty) return 'Ingrese su correo';
-                            if (!email.contains('@')) {
-                              return 'Ingrese un correo valido';
+                            if (email.isEmpty) return 'Ingrese su codigo';
+                            if (!email.contains('@') &&
+                                int.tryParse(email) == null) {
+                              return 'Ingrese codigo numerico o correo valido';
                             }
                             return null;
                           },
@@ -160,6 +183,23 @@ class _LoginPageState extends State<LoginPage> {
                                     ),
                             ),
                           ),
+                        ),
+                        if (failedAttempts > 0) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            failedAttempts >= 5
+                                ? 'Cuenta bloqueada temporalmente'
+                                : 'Intentos fallidos: $failedAttempts/5',
+                            style: const TextStyle(color: Colors.redAccent),
+                          ),
+                        ],
+                        const SizedBox(height: 10),
+                        TextButton.icon(
+                          onPressed: () => showMessage(
+                            'Contacta al administrador de agencia para restablecer acceso.',
+                          ),
+                          icon: const Icon(Icons.help_outline),
+                          label: const Text('Problemas para ingresar'),
                         ),
                       ],
                     ),
@@ -282,4 +322,8 @@ class _LoadingButtonContent extends StatelessWidget {
       ],
     );
   }
+}
+
+String _timeText(DateTime value) {
+  return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
