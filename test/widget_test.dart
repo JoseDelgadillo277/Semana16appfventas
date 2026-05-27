@@ -6,14 +6,14 @@ void main() {
   testWidgets('shows demo scoring dashboard', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
-        home: HomePage(demoMode: true, userEmail: 'demo@cliente.pe'),
+        home: HomePage(demoMode: true, userEmail: 'alumno1@example.com'),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Banco Falabella'), findsOneWidget);
+    expect(find.text('Fuerza de Ventas'), findsOneWidget);
     expect(find.textContaining('Modo demo activo'), findsOneWidget);
-    expect(find.text('Credito preaprobado'), findsOneWidget);
-    expect(find.byIcon(Icons.speed_outlined), findsOneWidget);
+    expect(find.text('Cartera diaria'), findsWidgets);
+    expect(find.byIcon(Icons.list_alt), findsOneWidget);
   });
 }

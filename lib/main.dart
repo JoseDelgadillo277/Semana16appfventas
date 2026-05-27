@@ -23,7 +23,7 @@ class BancoFalabellaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Banco Falabella Peru',
+      title: 'Banco Falabella Fuerza de Ventas',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF007A3D)),
@@ -41,7 +41,7 @@ class AuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!SupabaseConfig.isConfigured) {
-      return const HomePage(demoMode: true, userEmail: 'demo@cliente.pe');
+      return const HomePage(demoMode: true, userEmail: 'alumno1@example.com');
     }
 
     final auth = Supabase.instance.client.auth;

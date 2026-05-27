@@ -10,6 +10,8 @@ Los archivos SQL del profesor se mantienen sin cambios en la carpeta anterior al
 4. Ejecutar `seed_agencias_asesores.sql`.
 5. Ejecutar `supabase/sql/02_compatibilidad_antes_seed_1800.sql`.
 6. Ejecutar `supabase/sql/03_seed_scoring_1800_compatible.sql`.
+7. Ejecutar `supabase/sql/04_usuario_prueba_alumno1.sql`.
+8. Ejecutar `supabase/sql/05_policies_fuerza_ventas.sql`.
 
 ## Conexion Supabase de la app
 
@@ -41,6 +43,7 @@ defecto.
 - `fichas_campo`
 - `vw_pbi_agencias`
 - `vw_pbi_asesores`
+- `vw_pbi_fichas_campo`
 - `vw_pbi_kpis_piloto`
 
 ## Observaciones sin editar los SQL originales
@@ -48,5 +51,7 @@ defecto.
 - Los scripts del profesor asumen que ya existen `public.cuentas` y `public.transacciones`.
 - `scores_transaccionales` debe permitir conflicto por `user_id` para que funcione la funcion `calcular_score_transaccional`.
 - El seed masivo crea datos simulados, pero depende de usuarios compatibles con `auth.users`.
+- La app fuerza de ventas necesita politicas RLS mas amplias que la app cliente: leer cartera completa, insertar `fichas_campo` y actualizar estado en `creditos_preaprobados`.
 - Si el profesor pide mantener los SQL intactos, esos ajustes deben manejarse como setup complementario o desde Supabase antes de cargar la data.
 - `03_seed_scoring_1800_compatible.sql` es una copia del seed de 1,800 clientes con un casteo a `BIGINT` para evitar overflow al generar telefonos. El original del profesor no se modifica.
+- `05_policies_fuerza_ventas.sql` es complementario: no cambia los SQL del profesor, solo habilita permisos para el usuario autenticado de la app de asesores.

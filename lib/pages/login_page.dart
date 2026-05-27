@@ -77,7 +77,7 @@ class _LoginPageState extends State<LoginPage> {
                         const _FalabellaLogo(),
                         const SizedBox(height: 8),
                         const Text(
-                          'Banca movil para clientes',
+                          'App Fuerza de Ventas',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 15, color: Colors.black54),
                         ),
@@ -152,7 +152,7 @@ class _LoginPageState extends State<LoginPage> {
                                   ? const _LoadingButtonContent()
                                   : const Text(
                                       key: ValueKey('loginText'),
-                                      'Ingresar',
+                                      'Ingresar como asesor',
                                       style: TextStyle(
                                         fontSize: 17,
                                         fontWeight: FontWeight.bold,
