@@ -1,6 +1,6 @@
-import 'package:bancofalabella_app2/pages/home_page.dart';
-import 'package:bancofalabella_app2/pages/login_page.dart';
 import 'package:bancofalabella_app2/supabase_config.dart';
+import 'package:bancofalabella_app2/views/home_page.dart';
+import 'package:bancofalabella_app2/views/login_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 

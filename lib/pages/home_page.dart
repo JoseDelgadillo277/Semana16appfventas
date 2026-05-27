@@ -1,5 +1,6 @@
 import 'package:bancofalabella_app2/services/scoring_repository.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:bancofalabella_app2/viewmodels/home_view_model.dart';
+import 'package:bancofalabella_app2/viewmodels/route_view_model.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
@@ -32,239 +33,168 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final repository = ScoringRepository();
-  late Future<SalesDashboardData> dashboardFuture;
-  int selectedIndex = 0;
-  int selectedClientIndex = 0;
-  String segmentFilter = 'TODOS';
-  String statusFilter = 'TODOS';
-  String searchQuery = '';
-  bool online = true;
+  late final HomeViewModel viewModel;
 
   @override
   void initState() {
     super.initState();
-    dashboardFuture = repository.loadDashboard(forceDemo: widget.demoMode);
-    Connectivity().checkConnectivity().then((result) {
-      if (!mounted) return;
-      setState(() => online = !result.contains(ConnectivityResult.none));
-    });
-    Connectivity().onConnectivityChanged.listen((result) {
-      if (!mounted) return;
-      setState(() => online = !result.contains(ConnectivityResult.none));
-    });
+    viewModel = HomeViewModel(demoMode: widget.demoMode);
   }
 
-  Future<void> refresh() async {
-    setState(() {
-      dashboardFuture = repository.loadDashboard(forceDemo: widget.demoMode);
-    });
-  }
-
-  Future<void> signOut() async {
-    await repository.signOut();
-  }
-
-  void openFieldFile(int index) {
-    setState(() {
-      selectedClientIndex = index;
-      selectedIndex = 2;
-    });
-  }
-
-  void openRoute(int index) {
-    setState(() {
-      selectedClientIndex = index;
-      selectedIndex = 1;
-    });
+  @override
+  void dispose() {
+    viewModel.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _AppColors.background,
-      appBar: AppBar(
-        backgroundColor: _AppColors.green,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        titleSpacing: 16,
-        flexibleSpace: const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [_AppColors.green, _AppColors.deepGreen],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+    return AnimatedBuilder(
+      animation: viewModel,
+      builder: (context, _) => Scaffold(
+        backgroundColor: _AppColors.background,
+        appBar: AppBar(
+          backgroundColor: _AppColors.green,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          titleSpacing: 16,
+          flexibleSpace: const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [_AppColors.green, _AppColors.deepGreen],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
             ),
           ),
+          title: const Text('Fuerza de Ventas'),
+          actions: [
+            IconButton(
+              tooltip: 'Actualizar',
+              onPressed: viewModel.refresh,
+              icon: const Icon(Icons.sync),
+            ),
+            IconButton(
+              tooltip: 'Cerrar sesion',
+              onPressed: widget.demoMode ? null : viewModel.signOut,
+              icon: const Icon(Icons.logout),
+            ),
+          ],
         ),
-        title: const Text('Fuerza de Ventas'),
-        actions: [
-          IconButton(
-            tooltip: 'Actualizar',
-            onPressed: refresh,
-            icon: const Icon(Icons.sync),
-          ),
-          IconButton(
-            tooltip: 'Cerrar sesion',
-            onPressed: widget.demoMode ? null : signOut,
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
-      body: FutureBuilder<SalesDashboardData>(
-        future: dashboardFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const _LoadingDashboard();
-          }
+        body: FutureBuilder<SalesDashboardData>(
+          future: viewModel.dashboardFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _LoadingDashboard();
+            }
 
-          if (snapshot.hasError) {
-            return _StateMessage(
-              icon: Icons.cloud_off,
-              title: 'No se pudo cargar Supabase',
-              message: snapshot.error.toString(),
+            if (snapshot.hasError) {
+              return _StateMessage(
+                icon: Icons.cloud_off,
+                title: 'No se pudo cargar Supabase',
+                message: snapshot.error.toString(),
+              );
+            }
+
+            final effectiveData = viewModel.withCurrentConnectivity(
+              snapshot.data!,
             );
-          }
+            final filtered = viewModel.filteredClients(effectiveData.portfolio);
+            final selectedClient = viewModel.selectedClient(
+              effectiveData.portfolio,
+            );
 
-          final data = snapshot.data!;
-          final effectiveData = SalesDashboardData(
-            advisor: data.advisor,
-            portfolio: data.portfolio,
-            agencies: data.agencies,
-            advisors: data.advisors,
-            kpis: data.kpis,
-            history: data.history,
-            requests: data.requests,
-            bureau: data.bureau,
-            alerts: data.alerts,
-            collections: data.collections,
-            pendingSync: data.pendingSync,
-            lastSyncLabel: data.lastSyncLabel,
-            role: data.role,
-            online: online,
-            isDemo: data.isDemo,
-          );
-          final filtered = _filteredClients(effectiveData.portfolio);
-          final safeSelectedIndex = effectiveData.portfolio.isEmpty
-              ? 0
-              : selectedClientIndex
-                    .clamp(0, effectiveData.portfolio.length - 1)
-                    .toInt();
-          final selectedClient = effectiveData.portfolio.isEmpty
-              ? null
-              : effectiveData.portfolio[safeSelectedIndex];
+            final pages = [
+              _PortfolioTab(
+                data: effectiveData,
+                clients: filtered,
+                segmentFilter: viewModel.segmentFilter,
+                statusFilter: viewModel.statusFilter,
+                searchQuery: viewModel.searchQuery,
+                onSegmentChanged: viewModel.setSegmentFilter,
+                onStatusChanged: viewModel.setStatusFilter,
+                onSearchChanged: viewModel.setSearchQuery,
+                onOpenFieldFile: (client) => viewModel.openFieldFile(
+                  effectiveData.portfolio.indexOf(client),
+                ),
+                onOpenRoute: (client) => viewModel.openRoute(
+                  effectiveData.portfolio.indexOf(client),
+                ),
+              ),
+              _RouteTab(
+                clients: effectiveData.portfolio,
+                selected: selectedClient,
+                repository: viewModel.repository,
+                onSelect: viewModel.selectClient,
+                onLocationUpdated: viewModel.refresh,
+              ),
+              _FieldFileTab(
+                client: selectedClient,
+                data: effectiveData,
+                repository: viewModel.repository,
+                onSubmitted: viewModel.refresh,
+              ),
+              _ApplicationTab(
+                client: selectedClient,
+                data: effectiveData,
+                repository: viewModel.repository,
+                onSubmitted: viewModel.refresh,
+              ),
+              _TrackingTab(data: effectiveData, repository: viewModel.repository),
+              _MoreTab(
+                data: effectiveData,
+                selected: selectedClient,
+                repository: viewModel.repository,
+              ),
+            ];
 
-          final pages = [
-            _PortfolioTab(
-              data: effectiveData,
-              clients: filtered,
-              segmentFilter: segmentFilter,
-              statusFilter: statusFilter,
-              searchQuery: searchQuery,
-              onSegmentChanged: (value) =>
-                  setState(() => segmentFilter = value),
-              onStatusChanged: (value) => setState(() => statusFilter = value),
-              onSearchChanged: (value) => setState(() => searchQuery = value),
-              onOpenFieldFile: (client) =>
-                  openFieldFile(effectiveData.portfolio.indexOf(client)),
-              onOpenRoute: (client) =>
-                  openRoute(effectiveData.portfolio.indexOf(client)),
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              child: pages[viewModel.selectedIndex],
+            );
+          },
+        ),
+        bottomNavigationBar: NavigationBar(
+          backgroundColor: Colors.white,
+          indicatorColor: const Color(0xFFE0F2E7),
+          surfaceTintColor: Colors.white,
+          selectedIndex: viewModel.selectedIndex,
+          onDestinationSelected: viewModel.selectDestination,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.list_alt_outlined),
+              selectedIcon: Icon(Icons.list_alt),
+              label: 'Cartera',
             ),
-            _RouteTab(
-              clients: effectiveData.portfolio,
-              selected: selectedClient,
-              repository: repository,
-              onSelect: (index) => setState(() => selectedClientIndex = index),
-              onLocationUpdated: refresh,
+            NavigationDestination(
+              icon: Icon(Icons.route_outlined),
+              selectedIcon: Icon(Icons.route),
+              label: 'Ruta',
             ),
-            _FieldFileTab(
-              client: selectedClient,
-              data: effectiveData,
-              repository: repository,
-              onSubmitted: refresh,
+            NavigationDestination(
+              icon: Icon(Icons.assignment_outlined),
+              selectedIcon: Icon(Icons.assignment),
+              label: 'Ficha',
             ),
-            _ApplicationTab(
-              client: selectedClient,
-              data: effectiveData,
-              repository: repository,
-              onSubmitted: refresh,
+            NavigationDestination(
+              icon: Icon(Icons.request_page_outlined),
+              selectedIcon: Icon(Icons.request_page),
+              label: 'Solicitud',
             ),
-            _TrackingTab(data: effectiveData, repository: repository),
-            _MoreTab(
-              data: effectiveData,
-              selected: selectedClient,
-              repository: repository,
+            NavigationDestination(
+              icon: Icon(Icons.rule_outlined),
+              selectedIcon: Icon(Icons.rule),
+              label: 'Estados',
             ),
-          ];
-
-          return AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            child: pages[selectedIndex],
-          );
-        },
-      ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFE0F2E7),
-        surfaceTintColor: Colors.white,
-        selectedIndex: selectedIndex,
-        onDestinationSelected: (index) => setState(() => selectedIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.list_alt_outlined),
-            selectedIcon: Icon(Icons.list_alt),
-            label: 'Cartera',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.route_outlined),
-            selectedIcon: Icon(Icons.route),
-            label: 'Ruta',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.assignment_outlined),
-            selectedIcon: Icon(Icons.assignment),
-            label: 'Ficha',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.request_page_outlined),
-            selectedIcon: Icon(Icons.request_page),
-            label: 'Solicitud',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.rule_outlined),
-            selectedIcon: Icon(Icons.rule),
-            label: 'Estados',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_customize_outlined),
-            selectedIcon: Icon(Icons.dashboard_customize),
-            label: 'Mas',
-          ),
-        ],
+            NavigationDestination(
+              icon: Icon(Icons.dashboard_customize_outlined),
+              selectedIcon: Icon(Icons.dashboard_customize),
+              label: 'Mas',
+            ),
+          ],
+        ),
       ),
     );
-  }
-
-  List<PreapprovedClient> _filteredClients(List<PreapprovedClient> clients) {
-    return clients.where((client) {
-      final bySegment =
-          segmentFilter == 'TODOS' || client.segment == segmentFilter;
-      final byStatus = switch (statusFilter) {
-        'TODOS' => true,
-        'visitado' => client.visitStatus == 'visitado',
-        'pendiente' => client.visitStatus == 'pendiente',
-        _ =>
-          client.managementType == statusFilter ||
-              client.status == statusFilter,
-      };
-      final query = searchQuery.trim().toLowerCase();
-      final byQuery =
-          query.isEmpty ||
-          client.fullName.toLowerCase().contains(query) ||
-          client.maskedDocument.toLowerCase().contains(query) ||
-          _text(client.profile, 'dni').endsWith(query);
-      return bySegment && byStatus && byQuery;
-    }).toList();
   }
 }
 
@@ -426,6 +356,7 @@ class _RouteTab extends StatefulWidget {
 
 class _RouteTabState extends State<_RouteTab> {
   PreapprovedClient? routeSelected;
+  List<PreapprovedClient>? optimizedRoute;
 
   @override
   void didUpdateWidget(covariant _RouteTab oldWidget) {
@@ -433,11 +364,15 @@ class _RouteTabState extends State<_RouteTab> {
     if (widget.selected != oldWidget.selected) {
       routeSelected = widget.selected;
     }
+    if (widget.clients != oldWidget.clients) {
+      optimizedRoute = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final routeClients = [_plazaVeaHuancayoRouteClient(), ...widget.clients];
+    final routeClients =
+        optimizedRoute ?? RouteViewModel.withDemoDestination(widget.clients);
     final activeClient = routeSelected ?? widget.selected ?? routeClients.first;
 
     return _PagePadding(
@@ -453,6 +388,15 @@ class _RouteTabState extends State<_RouteTab> {
           ),
           _RouteMap(clients: routeClients, selected: activeClient),
           const SizedBox(height: 18),
+          OutlinedButton.icon(
+            onPressed: () => _optimizeRoute(context, routeClients),
+            icon: const Icon(Icons.alt_route),
+            label: const Text('Optimizar ruta'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+            ),
+          ),
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
@@ -530,46 +474,57 @@ class _RouteTabState extends State<_RouteTab> {
       return false;
     }
   }
-}
 
-PreapprovedClient _plazaVeaHuancayoRouteClient() {
-  return const PreapprovedClient(
-    credit: {
-      'id': 'ruta-plaza-vea-huancayo',
-      'user_id': 'ruta-plaza-vea-huancayo-user',
-      'score_transaccional': 704,
-      'score_final': 704,
-      'monto_hipotesis': 5000,
-      'monto_aprobado': 4200,
-      'segmento': 'PREMIER',
-      'estado': 'destino_ruta',
-    },
-    profile: {
-      'user_id': 'ruta-plaza-vea-huancayo-user',
-      'nombres': 'Plaza Vea',
-      'apellidos': 'Huancayo',
-      'dni': '00000678',
-      'distrito': 'Huancayo',
-      'departamento': 'Junin',
-      'tipo_negocio': 'Supermercado',
-      'nombre_negocio': 'Plaza Vea Huancayo',
-      'direccion_negocio': 'Plaza Vea Huancayo',
-      'lat_negocio': -12.057912,
-      'lng_negocio': -75.2168002,
-    },
-    score: {
-      'score_transaccional': 704,
-      'segmento_preliminar': 'PREMIER',
-      'monto_hipotesis': 5000,
-    },
-    fieldFile: {},
-    assignment: {
-      'prioridad': 'alta',
-      'score_prioridad': 88,
-      'estado_visita': 'pendiente',
-      'tipo_gestion': 'DESTINO_RUTA',
-    },
-  );
+  Future<void> _optimizeRoute(
+    BuildContext context,
+    List<PreapprovedClient> routeClients,
+  ) async {
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Optimizando ruta desde tu GPS...')),
+      );
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Permiso de ubicacion requerido para optimizar'),
+          ),
+        );
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      final optimized = RouteViewModel.optimizeByNearestNeighbor(
+        clients: routeClients,
+        startLat: position.latitude,
+        startLng: position.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        optimizedRoute = optimized;
+        routeSelected = optimized.first;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ruta optimizada por cercania')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo optimizar: $error')));
+    }
+  }
 }
 
 Future<void> _captureBusinessLocation({
@@ -614,7 +569,7 @@ Future<void> _captureBusinessLocation({
     );
     if (confirmedAddress == null) return;
 
-    await repository.updateBusinessLocation(
+    final saved = await repository.updateBusinessLocation(
       client: client,
       latitude: position.latitude,
       longitude: position.longitude,
@@ -625,7 +580,9 @@ Future<void> _captureBusinessLocation({
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Ubicacion actualizada: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
+          saved
+              ? 'Ubicacion actualizada: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}'
+              : 'Ubicacion capturada para destino de prueba: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}',
         ),
       ),
     );

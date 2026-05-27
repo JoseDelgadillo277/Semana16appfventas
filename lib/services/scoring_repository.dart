@@ -106,6 +106,7 @@ class PreapprovedClient {
       _number(credit, 'monto_aprobado', fallback: hypothesisAmount);
   num get lat => _number(profile, 'lat_negocio');
   num get lng => _number(profile, 'lng_negocio');
+  bool get isRouteDemoDestination => userId.startsWith('ruta-');
   bool get hasVisit => fieldFile.isNotEmpty;
   String get maskedDocument {
     final dni = _text(profile, 'dni', fallback: '00000000');
@@ -588,13 +589,15 @@ class ScoringRepository {
         .eq('id', client.id);
   }
 
-  Future<void> updateBusinessLocation({
+  Future<bool> updateBusinessLocation({
     required PreapprovedClient client,
     required double latitude,
     required double longitude,
     required String address,
   }) async {
-    if (!SupabaseConfig.isConfigured) return;
+    if (!SupabaseConfig.isConfigured || client.isRouteDemoDestination) {
+      return false;
+    }
     final supabase = Supabase.instance.client;
 
     await supabase
@@ -608,6 +611,7 @@ class ScoringRepository {
           'updated_at': DateTime.now().toIso8601String(),
         })
         .eq('user_id', client.userId);
+    return true;
   }
 
   Future<void> registerVisitResult({
