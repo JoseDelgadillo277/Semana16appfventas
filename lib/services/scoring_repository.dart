@@ -108,6 +108,26 @@ class PreapprovedClient {
   num get lng => _number(profile, 'lng_negocio');
   bool get isRouteDemoDestination => userId.startsWith('ruta-');
   bool get hasVisit => fieldFile.isNotEmpty;
+
+  PreapprovedClient withBusinessLocation({
+    required double latitude,
+    required double longitude,
+    required String address,
+  }) {
+    return PreapprovedClient(
+      credit: credit,
+      profile: {
+        ...profile,
+        'lat_negocio': latitude,
+        'lng_negocio': longitude,
+        if (address.isNotEmpty) 'direccion_negocio': address,
+      },
+      score: score,
+      fieldFile: fieldFile,
+      assignment: assignment,
+    );
+  }
+
   String get maskedDocument {
     final dni = _text(profile, 'dni', fallback: '00000000');
     if (dni.length <= 3) return '***';

@@ -140,7 +140,10 @@ class _HomePageState extends State<HomePage> {
                 repository: viewModel.repository,
                 onSubmitted: viewModel.refresh,
               ),
-              _TrackingTab(data: effectiveData, repository: viewModel.repository),
+              _TrackingTab(
+                data: effectiveData,
+                repository: viewModel.repository,
+              ),
               _MoreTab(
                 data: effectiveData,
                 selected: selectedClient,
@@ -409,12 +412,25 @@ class _RouteTabState extends State<_RouteTab> {
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _captureBusinessLocation(
-                    context: context,
-                    repository: widget.repository,
-                    client: activeClient,
-                    onUpdated: widget.onLocationUpdated,
-                  ),
+                  onPressed: () async {
+                    final updated = await _captureBusinessLocation(
+                      context: context,
+                      repository: widget.repository,
+                      client: activeClient,
+                      onUpdated: widget.onLocationUpdated,
+                    );
+                    if (updated == null || !mounted) return;
+                    setState(() {
+                      routeSelected = updated;
+                      optimizedRoute = routeClients
+                          .map(
+                            (client) => client.userId == updated.userId
+                                ? updated
+                                : client,
+                          )
+                          .toList();
+                    });
+                  },
                   icon: const Icon(Icons.my_location),
                   label: const Text('GPS negocio'),
                 ),
@@ -510,7 +526,7 @@ class _RouteTabState extends State<_RouteTab> {
         startLat: position.latitude,
         startLng: position.longitude,
       );
-      if (!mounted) return;
+      if (!context.mounted || !mounted) return;
       setState(() {
         optimizedRoute = optimized;
         routeSelected = optimized.first;
@@ -527,16 +543,16 @@ class _RouteTabState extends State<_RouteTab> {
   }
 }
 
-Future<void> _captureBusinessLocation({
+Future<PreapprovedClient?> _captureBusinessLocation({
   required BuildContext context,
   required ScoringRepository repository,
   required PreapprovedClient client,
   required VoidCallback onUpdated,
 }) async {
   try {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Obteniendo senal GPS...')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Obteniendo senal GPS...')));
 
     var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -544,11 +560,11 @@ Future<void> _captureBusinessLocation({
     }
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Permiso de ubicacion denegado')),
       );
-      return;
+      return null;
     }
 
     final position = await Geolocator.getCurrentPosition(
@@ -558,7 +574,7 @@ Future<void> _captureBusinessLocation({
       ),
     );
     final address = await _reverseGeocode(position);
-    if (!context.mounted) return;
+    if (!context.mounted) return null;
 
     final confirmedAddress = await _confirmBusinessLocation(
       context: context,
@@ -567,7 +583,7 @@ Future<void> _captureBusinessLocation({
       longitude: position.longitude,
       address: address,
     );
-    if (confirmedAddress == null) return;
+    if (confirmedAddress == null) return null;
 
     final saved = await repository.updateBusinessLocation(
       client: client,
@@ -575,7 +591,7 @@ Future<void> _captureBusinessLocation({
       longitude: position.longitude,
       address: confirmedAddress,
     );
-    if (!context.mounted) return;
+    if (!context.mounted) return null;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -587,11 +603,17 @@ Future<void> _captureBusinessLocation({
       ),
     );
     onUpdated();
+    return client.withBusinessLocation(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      address: confirmedAddress,
+    );
   } catch (error) {
-    if (!context.mounted) return;
+    if (!context.mounted) return null;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('GPS no disponible: $error')));
+    return null;
   }
 }
 

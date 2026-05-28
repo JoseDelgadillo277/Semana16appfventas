@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:bancofalabella_app2/models/sales_models.dart';
 import 'package:bancofalabella_app2/services/scoring_repository.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
