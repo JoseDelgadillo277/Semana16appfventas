@@ -360,12 +360,13 @@ class _RouteTab extends StatefulWidget {
 class _RouteTabState extends State<_RouteTab> {
   PreapprovedClient? routeSelected;
   List<PreapprovedClient>? optimizedRoute;
+  final Map<String, PreapprovedClient> locationOverrides = {};
 
   @override
   void didUpdateWidget(covariant _RouteTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.selected != oldWidget.selected) {
-      routeSelected = widget.selected;
+      routeSelected = _clientWithLocalLocation(widget.selected);
     }
     if (widget.clients != oldWidget.clients) {
       optimizedRoute = null;
@@ -374,9 +375,14 @@ class _RouteTabState extends State<_RouteTab> {
 
   @override
   Widget build(BuildContext context) {
-    final routeClients =
+    final baseRouteClients =
         optimizedRoute ?? RouteViewModel.withDemoDestination(widget.clients);
-    final activeClient = routeSelected ?? widget.selected ?? routeClients.first;
+    final routeClients = _clientsWithLocalLocations(baseRouteClients);
+    final selected = routeSelected ?? widget.selected;
+    final activeClient =
+        _matchingClient(selected, routeClients) ??
+        _clientWithLocalLocation(selected) ??
+        routeClients.first;
 
     return _PagePadding(
       child: Column(
@@ -417,10 +423,11 @@ class _RouteTabState extends State<_RouteTab> {
                       context: context,
                       repository: widget.repository,
                       client: activeClient,
-                      onUpdated: widget.onLocationUpdated,
+                      onUpdated: () {},
                     );
                     if (updated == null || !mounted) return;
                     setState(() {
+                      locationOverrides[updated.userId] = updated;
                       routeSelected = updated;
                       optimizedRoute = routeClients
                           .map(
@@ -430,6 +437,7 @@ class _RouteTabState extends State<_RouteTab> {
                           )
                           .toList();
                     });
+                    widget.onLocationUpdated();
                   },
                   icon: const Icon(Icons.my_location),
                   label: const Text('GPS negocio'),
@@ -455,6 +463,28 @@ class _RouteTabState extends State<_RouteTab> {
         ],
       ),
     );
+  }
+
+  List<PreapprovedClient> _clientsWithLocalLocations(
+    List<PreapprovedClient> clients,
+  ) {
+    return clients.map((client) => _clientWithLocalLocation(client)!).toList();
+  }
+
+  PreapprovedClient? _clientWithLocalLocation(PreapprovedClient? client) {
+    if (client == null) return null;
+    return locationOverrides[client.userId] ?? client;
+  }
+
+  PreapprovedClient? _matchingClient(
+    PreapprovedClient? selected,
+    List<PreapprovedClient> clients,
+  ) {
+    if (selected == null) return null;
+    for (final client in clients) {
+      if (client.userId == selected.userId) return client;
+    }
+    return null;
   }
 
   Future<void> _openNavigation(
