@@ -5,10 +5,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 
 class HomeViewModel extends ChangeNotifier {
-  HomeViewModel({
-    required this.demoMode,
-    ScoringRepository? repository,
-  }) : repository = repository ?? ScoringRepository() {
+  HomeViewModel({required this.demoMode, ScoringRepository? repository})
+    : repository = repository ?? ScoringRepository() {
     dashboardFuture = this.repository.loadDashboard(forceDemo: demoMode);
     _watchConnectivity();
   }
@@ -23,11 +21,18 @@ class HomeViewModel extends ChangeNotifier {
   String statusFilter = 'TODOS';
   String searchQuery = '';
   bool online = true;
+  final Map<String, PreapprovedClient> _locationOverrides = {};
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _disposed = false;
 
   Future<void> refresh() async {
+    dashboardFuture = repository.loadDashboard(forceDemo: demoMode);
+    notifyListeners();
+  }
+
+  void updateClientLocation(PreapprovedClient client) {
+    _locationOverrides[client.userId] = client;
     dashboardFuture = repository.loadDashboard(forceDemo: demoMode);
     notifyListeners();
   }
@@ -74,9 +79,13 @@ class HomeViewModel extends ChangeNotifier {
   }
 
   SalesDashboardData withCurrentConnectivity(SalesDashboardData data) {
+    final portfolio = data.portfolio
+        .map((client) => _locationOverrides[client.userId] ?? client)
+        .toList();
+
     return SalesDashboardData(
       advisor: data.advisor,
-      portfolio: data.portfolio,
+      portfolio: portfolio,
       agencies: data.agencies,
       advisors: data.advisors,
       kpis: data.kpis,

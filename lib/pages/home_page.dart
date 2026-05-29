@@ -126,7 +126,7 @@ class _HomePageState extends State<HomePage> {
                 selected: selectedClient,
                 repository: viewModel.repository,
                 onSelect: viewModel.selectClient,
-                onLocationUpdated: viewModel.refresh,
+                onLocationUpdated: viewModel.updateClientLocation,
               ),
               _FieldFileTab(
                 client: selectedClient,
@@ -351,7 +351,7 @@ class _RouteTab extends StatefulWidget {
   final PreapprovedClient? selected;
   final ScoringRepository repository;
   final ValueChanged<int> onSelect;
-  final VoidCallback onLocationUpdated;
+  final ValueChanged<PreapprovedClient> onLocationUpdated;
 
   @override
   State<_RouteTab> createState() => _RouteTabState();
@@ -437,7 +437,7 @@ class _RouteTabState extends State<_RouteTab> {
                           )
                           .toList();
                     });
-                    widget.onLocationUpdated();
+                    widget.onLocationUpdated(updated);
                   },
                   icon: const Icon(Icons.my_location),
                   label: const Text('GPS negocio'),
