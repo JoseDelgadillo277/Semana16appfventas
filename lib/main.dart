@@ -7,18 +7,26 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  var supabaseReady = false;
   if (SupabaseConfig.isConfigured) {
-    await Supabase.initialize(
-      url: SupabaseConfig.url,
-      anonKey: SupabaseConfig.anonKey,
-    );
+    try {
+      await Supabase.initialize(
+        url: SupabaseConfig.url,
+        anonKey: SupabaseConfig.anonKey,
+      );
+      supabaseReady = true;
+    } catch (_) {
+      supabaseReady = false;
+    }
   }
 
-  runApp(const BancoFalabellaApp());
+  runApp(BancoFalabellaApp(supabaseReady: supabaseReady));
 }
 
 class BancoFalabellaApp extends StatelessWidget {
-  const BancoFalabellaApp({super.key});
+  const BancoFalabellaApp({super.key, required this.supabaseReady});
+
+  final bool supabaseReady;
 
   @override
   Widget build(BuildContext context) {
@@ -30,17 +38,19 @@ class BancoFalabellaApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF3F6F4),
         useMaterial3: true,
       ),
-      home: const AuthGate(),
+      home: AuthGate(supabaseReady: supabaseReady),
     );
   }
 }
 
 class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+  const AuthGate({super.key, required this.supabaseReady});
+
+  final bool supabaseReady;
 
   @override
   Widget build(BuildContext context) {
-    if (!SupabaseConfig.isConfigured) {
+    if (!SupabaseConfig.isConfigured || !supabaseReady) {
       return const HomePage(demoMode: true, userEmail: 'alumno1@example.com');
     }
 

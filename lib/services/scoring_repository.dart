@@ -1,8 +1,21 @@
+﻿import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:bancofalabella_app2/supabase_config.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+const configuredCoreBaseUrl = String.fromEnvironment(
+  'CORE_BASE_URL',
+  defaultValue: '',
+);
+const fallbackCoreBaseUrl = 'http://127.0.0.1:8003';
+
+String get coreBaseUrl {
+  if (configuredCoreBaseUrl.isNotEmpty) return configuredCoreBaseUrl;
+  return kIsWeb ? fallbackCoreBaseUrl : 'http://10.0.2.2:8003';
+}
 
 class SalesDashboardData {
   const SalesDashboardData({
@@ -373,6 +386,11 @@ class FieldScoringResult {
 
 class ScoringRepository {
   Future<SalesDashboardData> loadDashboard({bool forceDemo = false}) async {
+    if (!forceDemo) {
+      final coreData = await _tryLoadCoreDashboard();
+      if (coreData != null) return coreData;
+    }
+
     if (forceDemo || !SupabaseConfig.isConfigured) {
       return _demoData;
     }
@@ -529,6 +547,159 @@ class ScoringRepository {
     }
   }
 
+  Future<SalesDashboardData?> _tryLoadCoreDashboard() async {
+    try {
+      final rows = await _getCoreList('/cartera/demo');
+      if (rows.isEmpty) return null;
+      final requests = await _optionalList(_getCoreList('/solicitudes/demo'));
+      final history = await _optionalList(
+        _getCoreList('/cartera/demo/historial'),
+      );
+      final portfolio = rows.map(_clientFromCoreCartera).toList()
+        ..sort((a, b) {
+          final statusCompare = _visitOrder(
+            a.visitStatus,
+          ).compareTo(_visitOrder(b.visitStatus));
+          if (statusCompare != 0) return statusCompare;
+          return b.priorityScore.compareTo(a.priorityScore);
+        });
+      return SalesDashboardData(
+        advisor: _advisorFromSession('alumno1@example.com'),
+        portfolio: portfolio,
+        agencies: const [],
+        advisors: const [],
+        kpis: [
+          {
+            'agencia': 'Core FastAPI 8003',
+            'visitas_totales': portfolio.length,
+            'desembolsos': portfolio
+                .where((client) => client.status == 'desembolsado')
+                .length,
+            'monto_desembolsado': portfolio.fold<num>(
+              0,
+              (sum, client) => sum + client.approvedAmount,
+            ),
+            'mora_30_pct': 0,
+            'tasa_conversion_pct': portfolio.isEmpty ? 0 : 100,
+          },
+        ],
+        history: history,
+        requests: requests.isEmpty
+            ? portfolio
+                  .map(
+                    (client) => {
+                      'numero_expediente': _text(
+                        client.credit,
+                        'numero_expediente',
+                        fallback: client.id,
+                      ),
+                      'cliente_nombre': client.fullName,
+                      'estado': client.status,
+                      'monto_solicitado': client.hypothesisAmount,
+                      'monto_aprobado': client.approvedAmount,
+                      'plazo_meses': _number(
+                        client.credit,
+                        'plazo_meses',
+                        fallback: 12,
+                      ),
+                      'created_at': DateTime.now().toIso8601String(),
+                    },
+                  )
+                  .toList()
+            : requests,
+        bureau: const [],
+        alerts: const [],
+        collections: const [],
+        pendingSync: 0,
+        lastSyncLabel: 'core ${_timeLabel(DateTime.now())}',
+        role: 'Operador',
+        online: true,
+        isDemo: false,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  PreapprovedClient _clientFromCoreCartera(Map<String, dynamic> row) {
+    final document = _text(row, 'documento', fallback: '00000000');
+    final clienteId = _text(row, 'cliente_id', fallback: 'core-cliente');
+    final fullName = _text(row, 'cliente_nombre', fallback: 'Cliente Core');
+    final parts = fullName.split(' ');
+    final name = parts.isEmpty ? fullName : parts.first;
+    final lastName = parts.length <= 1 ? '' : parts.skip(1).join(' ');
+    final amount = _number(row, 'monto_credito');
+    final priorityScore = _number(row, 'score_prioridad', fallback: 40);
+    final visitStatus = _visitStatus(row);
+    final requestStatus = _text(row, 'estado_solicitud', fallback: 'enviado');
+    final segment = amount >= 8000
+        ? 'PREMIER'
+        : (amount >= 3000 ? 'ESTANDAR' : 'BASICO');
+    return PreapprovedClient(
+      credit: {
+        'id': _text(row, 'id', fallback: clienteId),
+        'user_id': clienteId,
+        'score_id': '$clienteId-core-score',
+        'numero_expediente': _text(
+          row,
+          'numero_expediente',
+          fallback: _text(row, 'id', fallback: clienteId),
+        ),
+        'segmento': segment,
+        'score_transaccional': 500 + priorityScore,
+        'score_campo': 0,
+        'score_final': 500 + priorityScore,
+        'monto_hipotesis': amount,
+        'monto_aprobado': amount,
+        'plazo_meses': 12,
+        'cuota_mensual': amount * paymentFactor(0.4392, 12),
+        'fecha_preaprobacion': DateTime.now().toIso8601String(),
+        'dias_mora': 0,
+        'estado': requestStatus,
+        'estado_pago': 'al_dia',
+      },
+      profile: {
+        'user_id': clienteId,
+        'nombres': name,
+        'apellidos': lastName,
+        'dni': document,
+        'telefono': '',
+        'distrito': 'Por visitar',
+        'departamento': 'Junin',
+        'tipo_negocio': 'Microempresa',
+        'nombre_negocio': 'Negocio de $name',
+        'direccion_negocio': 'Direccion pendiente',
+        'lat_negocio': _number(row, 'lat', fallback: -12.065),
+        'lng_negocio': _number(row, 'lng', fallback: -75.205),
+        'antiguedad_negocio_meses': 48,
+        'tenencia_local': 'alquilado_con_contrato',
+        'num_entidades_sbs': 1,
+        'calificacion_sbs': 'Normal',
+      },
+      score: {
+        'id': '$clienteId-core-score',
+        'user_id': clienteId,
+        'score_transaccional': 500 + priorityScore,
+        'segmento_preliminar': segment,
+        'monto_hipotesis': amount,
+        'ingreso_promedio_ref': 3000,
+        'cuota_max_ref': 900,
+      },
+      fieldFile: const {},
+      assignment: {
+        'id': _text(row, 'id'),
+        'source': 'core',
+        'cliente_user_id': clienteId,
+        'solicitud_id': _text(row, 'solicitud_id'),
+        'tipo_gestion': _text(row, 'tipo_gestion', fallback: 'NUEVA_SOLICITUD'),
+        'prioridad': _text(row, 'prioridad', fallback: 'normal'),
+        'score_prioridad': priorityScore,
+        'estado_visita': visitStatus,
+        'fecha_asignacion': DateTime.now().toIso8601String(),
+      },
+    );
+  }
+
   Future<void> submitFieldFile({
     required PreapprovedClient client,
     required FieldScoringInput input,
@@ -536,6 +707,27 @@ class ScoringRepository {
     required String advisorName,
     required String agency,
   }) async {
+    if (_text(client.assignment, 'source') == 'core') {
+      final assignmentId = _text(client.assignment, 'id');
+      if (assignmentId.isEmpty) return;
+      await _postCore('/cartera/demo/$assignmentId/comite', {
+        'asesor_nombre': advisorName,
+        'agencia': agency,
+        'score_transaccional': client.scoreValue.toInt(),
+        'score_campo': result.scoreCampo,
+        'score_final': result.scoreFinal,
+        'segmento': result.segment,
+        'monto_propuesto': result.disqualified
+            ? 0
+            : min(input.montoPropuesto.toDouble(), result.maxAmount),
+        'plazo_meses': input.plazoMeses,
+        'cuota_estimada': result.payment,
+        'recomendacion': result.disqualified ? 'rechazar' : input.recomendacion,
+        'observaciones': input.observaciones,
+      });
+      return;
+    }
+
     if (!SupabaseConfig.isConfigured) return;
 
     final supabase = Supabase.instance.client;
@@ -639,6 +831,18 @@ class ScoringRepository {
     required String result,
     required String observation,
   }) async {
+    if (_text(client.assignment, 'source') == 'core') {
+      final assignmentId = _text(client.assignment, 'id');
+      if (assignmentId.isEmpty) return;
+      await _postCore('/cartera/demo/$assignmentId/visita', {
+        'resultado': result,
+        'observacion': observation,
+        'lat': client.lat,
+        'lng': client.lng,
+      });
+      return;
+    }
+
     if (!SupabaseConfig.isConfigured) return;
     final supabase = Supabase.instance.client;
     final assignmentId = _text(client.assignment, 'id');
@@ -796,6 +1000,48 @@ class ScoringRepository {
     } catch (_) {
       return const <Map<String, dynamic>>[];
     }
+  }
+
+  static Future<List<Map<String, dynamic>>> _getCoreList(String path) async {
+    try {
+      return _asList(await _coreRequest('GET', path));
+    } catch (_) {
+      if (coreBaseUrl == fallbackCoreBaseUrl) rethrow;
+      return _asList(await _coreRequest('GET', path, fallback: true));
+    }
+  }
+
+  static Future<void> _postCore(String path, Map<String, dynamic> body) async {
+    try {
+      await _coreRequest('POST', path, body: body);
+    } catch (_) {
+      if (coreBaseUrl == fallbackCoreBaseUrl) rethrow;
+      await _coreRequest('POST', path, body: body, fallback: true);
+    }
+  }
+
+  static Future<dynamic> _coreRequest(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool fallback = false,
+  }) async {
+    final baseUrl = fallback ? fallbackCoreBaseUrl : coreBaseUrl;
+    final uri = Uri.parse('$baseUrl$path');
+    final response = method == 'POST'
+        ? await http
+              .post(
+                uri,
+                headers: const {'Content-Type': 'application/json'},
+                body: jsonEncode(body ?? const <String, dynamic>{}),
+              )
+              .timeout(const Duration(seconds: 8))
+        : await http.get(uri).timeout(const Duration(seconds: 8));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Core ${response.statusCode}: ${response.body}');
+    }
+    if (response.body.trim().isEmpty) return null;
+    return jsonDecode(response.body);
   }
 
   static Map<String, Map<String, dynamic>> _latestByUser(
@@ -1094,9 +1340,22 @@ class ScoringRepository {
 String _text(Map<String, dynamic> map, String key, {String fallback = ''}) {
   final value = map[key];
   if (value == null) return fallback;
-  final text = value.toString();
+  final text = value.toString().trim();
   return text.isEmpty ? fallback : text;
 }
+
+String _visitStatus(Map<String, dynamic> row) {
+  final raw = _text(
+    row,
+    'estado_visita',
+    fallback: 'pendiente',
+  ).toLowerCase().replaceAll(' ', '_');
+  if (raw.contains('pend')) return 'pendiente';
+  if (raw.contains('visit')) return 'visitado';
+  return raw.isEmpty ? 'pendiente' : raw;
+}
+
+int _visitOrder(String status) => status == 'pendiente' ? 0 : 1;
 
 num _number(Map<String, dynamic> map, String key, {num fallback = 0}) {
   final value = map[key];
@@ -1111,3 +1370,4 @@ String _segmentForScore(int score) {
   if (score >= 350) return 'BASICO';
   return 'NO_APLICA';
 }
+

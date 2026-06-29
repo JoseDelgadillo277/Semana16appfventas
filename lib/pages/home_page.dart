@@ -715,6 +715,36 @@ Future<String?> _confirmBusinessLocation({
   ).whenComplete(controller.dispose);
 }
 
+Future<ImageSource?> _chooseImageSource(
+  BuildContext context,
+  String documentName,
+) {
+  return showModalBottomSheet<ImageSource>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera),
+              title: Text('Tomar foto de $documentName'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: const Text('Subir archivo o foto'),
+              onTap: () => Navigator.pop(sheetContext, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _FieldFileTab extends StatefulWidget {
   const _FieldFileTab({
     required this.client,
@@ -746,6 +776,10 @@ class _FieldFileTabState extends State<_FieldFileTab> {
   String recomendacion = 'aprobar';
   bool dniCaptured = false;
   bool businessDocCaptured = false;
+  bool uploadingDni = false;
+  bool uploadingBusinessDoc = false;
+  String dniDocumentLabel = '';
+  String businessDocumentLabel = '';
   bool sending = false;
   final amountController = TextEditingController(text: '1800');
   final observationsController = TextEditingController();
@@ -914,7 +948,13 @@ class _FieldFileTabState extends State<_FieldFileTab> {
                 child: _CaptureButton(
                   label: 'DNI',
                   captured: dniCaptured,
-                  onPressed: () => setState(() => dniCaptured = true),
+                  loading: uploadingDni,
+                  detail: dniDocumentLabel,
+                  onPressed: () => _captureFieldDocument(
+                    client: client,
+                    type: 'dni',
+                    displayName: 'DNI',
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -922,7 +962,13 @@ class _FieldFileTabState extends State<_FieldFileTab> {
                 child: _CaptureButton(
                   label: 'Documento negocio',
                   captured: businessDocCaptured,
-                  onPressed: () => setState(() => businessDocCaptured = true),
+                  loading: uploadingBusinessDoc,
+                  detail: businessDocumentLabel,
+                  onPressed: () => _captureFieldDocument(
+                    client: client,
+                    type: 'documento_negocio',
+                    displayName: 'Documento negocio',
+                  ),
                 ),
               ),
             ],
@@ -969,6 +1015,71 @@ class _FieldFileTabState extends State<_FieldFileTab> {
         ],
       ),
     );
+  }
+
+  Future<void> _captureFieldDocument({
+    required PreapprovedClient client,
+    required String type,
+    required String displayName,
+  }) async {
+    final source = await _chooseImageSource(context, displayName);
+    if (source == null) return;
+
+    setState(() {
+      if (type == 'dni') {
+        uploadingDni = true;
+      } else {
+        uploadingBusinessDoc = true;
+      }
+    });
+
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(source: source, imageQuality: 72);
+      if (image == null) return;
+
+      final bytes = await image.readAsBytes();
+      final extension = image.name.split('.').last;
+      final url = await widget.repository.uploadDocument(
+        client: client,
+        type: type,
+        bytes: bytes,
+        extension: extension,
+      );
+      final label = image.name.isEmpty ? url : image.name;
+
+      if (!mounted) return;
+      setState(() {
+        if (type == 'dni') {
+          dniCaptured = true;
+          dniDocumentLabel = label;
+        } else {
+          businessDocCaptured = true;
+          businessDocumentLabel = label;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$displayName cargado correctamente')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo cargar $displayName: $error'),
+          backgroundColor: _AppColors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (type == 'dni') {
+            uploadingDni = false;
+          } else {
+            uploadingBusinessDoc = false;
+          }
+        });
+      }
+    }
   }
 
   Future<void> _submit(
@@ -1840,7 +1951,9 @@ class _SyncBanner extends StatelessWidget {
                   ? 'Ultima actualizacion: $lastSync - $pendingSync pendientes de sincronizar'
                   : !online
                   ? 'Modo offline activo - se usara cache local y cola pendiente'
-                  : 'Ultima actualizacion: $lastSync - cartera disponible offline',
+                  : lastSync.toLowerCase().contains('core')
+                  ? 'Ultima actualizacion: $lastSync - conectado al Core FastAPI'
+                  : 'Ultima actualizacion: $lastSync - cartera sincronizada',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.w800),
@@ -2334,18 +2447,65 @@ class _CaptureButton extends StatelessWidget {
     required this.label,
     required this.captured,
     required this.onPressed,
+    this.loading = false,
+    this.detail = '',
   });
 
   final String label;
   final bool captured;
+  final bool loading;
+  final String detail;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(captured ? Icons.check_circle : Icons.photo_camera),
-      label: Text(captured ? '$label listo' : label),
+    final title = loading
+        ? 'Cargando $label...'
+        : (captured ? '$label listo' : label);
+    return OutlinedButton(
+      onPressed: loading ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (loading)
+            const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Icon(captured ? Icons.check_circle : Icons.photo_camera),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+                if (detail.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    detail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
